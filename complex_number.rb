@@ -32,7 +32,7 @@ class ComplexNumber
   end
 
   # behavior of c (self) under iteration of fc(z) = z^2 + c
-  def member?(iterations = 20)
+  def member?(iterations = 50)
     z = self
     if z.magnitude >= 2
       return 0
