@@ -1,0 +1,11 @@
+%html
+  %head
+    %title Mandelbrot Set Render
+    %link(rel="stylesheet" type="text/css" href="style.css")
+    / %script(src="bitmap.txt")
+    / %script(src="script.js")
+
+  %body(onload="render()")
+    / %canvas#render
+    %img(src="mandelbrot_render.png")
+
