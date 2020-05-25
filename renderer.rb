@@ -5,7 +5,7 @@ require 'oily_png'
 
 class Renderer
 
-  PRECISION = 17
+  PRECISION = 6
 
   attr_accessor :bitmap, :points, :x_resolution, :y_resolution, :iterations, :x_min, :x_max, :y_min, :y_max, :x_offset, :y_offset, :iterations, :zoom
 
@@ -185,38 +185,33 @@ class Renderer
   end
 end
 
-# # open('bitmap.txt', 'w') do |f|
-# #   f.puts "var points = ["
-# #   transform.each do |p|  
-# #     f.puts "[#{p[0].round(3)}, #{p[1].round(3)}],"
-# #   end
-# #   f.puts "[0,0]]" 
-# # end
-
 # Origin (0 + 0i)
 # Left Blob (-1.765 + 0i)
 # Left Blob of the Left Blob (-1.786 + 0i)
 # Left Blob^3 (-1.78643 + 0i)
 # Starfish (-0.5622026215231 + 0.6428171490727i)
 
-# x = -0.5622026215231
-# y =  0.6428171490727
 
-x = -0.5622026215231
-y =  0.6428171490727
+x =  [1.1998, -1.1998]
+y =  [0.6746, -0.6746]
 
-z = 120
-zoom = 2**24
-x_resolution, y_resolution = 960, 540
+# at zoom == 2, width: 2.3996, height: 1.3492
+
+z = 450
+zoom = 2**1
+# x_resolution, y_resolution = 960, 540
 # x_resolution, y_resolution = 1920, 1080
+# x_resolution, y_resolution = 2560, 1440
 # x_resolution, y_resolution = 3840, 2160
-# x_resolution, y_resolution = 7680, 4320
+x_resolution, y_resolution = 7680, 4320
 
 # t0 = Time.now
 
-r = Renderer.new(z, zoom, x, y, x_resolution, y_resolution).export_png
-
-
+y.each do |y|
+  x.each do |x|
+    Renderer.new(z, zoom, x, y, x_resolution, y_resolution).export_png
+  end
+end
 # # x_resolution, y_resolution = 1920, 1080
 # # x_resolution, y_resolution = 3840, 2160
 # # x_resolution, y_resolution = 7680, 4320
