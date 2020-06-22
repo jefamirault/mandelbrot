@@ -1,11 +1,11 @@
-total_start = Time.now
-
+require 'bigdecimal'
 require_relative 'complex_number'
 require 'oily_png'
+require 'logger' 
 
 class Renderer
 
-  PRECISION = 6
+  PRECISION = 19
 
   attr_accessor :bitmap, :points, :x_resolution, :y_resolution, :iterations, :x_min, :x_max, :y_min, :y_max, :x_offset, :y_offset, :iterations, :zoom
 
@@ -24,7 +24,9 @@ class Renderer
     y_range / y_resolution
   end
 
-  def initialize(iterations = 40, zoom = 1.0, center_x = 0, center_y = 0, width = 960, length = 540)
+  def initialize(iterations = 40, zoom = 1.0, center_x = '0', center_y = '0', width = 960, length = 540)
+    # center_x = BigDecimal center_x
+    # center_y = BigDecimal center_y
     self.iterations = iterations
     self.x_resolution = width
     self.y_resolution = length
@@ -36,8 +38,17 @@ class Renderer
     self.y_max = (length / 400.0) / @zoom + center_y
     self.y_min = (-1 * length / 400.0) / @zoom + center_y
 
+
+    log = Logger.new 'log.txt'
     t0 = Time.now
+    log.info "Generating Mandelbrot Render"
     puts "Generating Mandelbrot Render #{t0}"
+    log.info "Zoom: #{zoom}"
+    log.info "Center: (#{center_x}, #{center_y})"
+    log.info "x-range: [#{x_min}, #{x_max}], x-step: #{x_step}"
+    log.info "y-range: [#{y_min}, #{y_max}], y-step: #{y_step}"
+    log.info "iterations: #{iterations}"
+
     x = @x_min
     @points = [] # [[a, b], ...]
     # puts "x_min: #{@x_min}"
@@ -65,11 +76,12 @@ class Renderer
       [*p, ComplexNumber.new(p[0].round(PRECISION), p[1].round(PRECISION)).member?(iterations)]
     end
     t2 = Time.now
+    log.info "Set membership computed in (#{t2 - t1}) seconds"
     puts "100%. Set membership computed in (#{t2 - t1}) seconds"
   end
 
   def export_png(filename = nil)
-    colors = []                      #  r    g    b    a
+     colors = []                      #  r    g    b    a
       colors << ChunkyPNG::Color.rgba(  0,   0, 255, 255) # blue
       colors << ChunkyPNG::Color.rgba( 21,   0, 255, 255)
       colors << ChunkyPNG::Color.rgba( 42,   0, 255, 255)
@@ -189,44 +201,38 @@ end
 # Left Blob (-1.765 + 0i)
 # Left Blob of the Left Blob (-1.786 + 0i)
 # Left Blob^3 (-1.78643 + 0i)
+# Left Blob^5 (-1.7868551146316527 0.0)
 # Starfish (-0.5622026215231 + 0.6428171490727i)
+# Flower (-0.4170662 + 0.60295913i)
 
-
-x =  [1.1998, -1.1998]
-y =  [0.6746, -0.6746]
+# 4*8k cells = 15k composite
+# x =  [1.1998, -1.1998]
+# y =  [0.6746, -0.6746]
 
 # at zoom == 2, width: 2.3996, height: 1.3492
 
-z = 450
-zoom = 2**1
-# x_resolution, y_resolution = 960, 540
+z = 1
+# zoom = 2**26
+# zoom = 2**24
+
+# zoom = 2**16
+
+# zoom = 2**10
+# x, y = -1.40116, 0
+
+# x, y = -1.7864324414062498, 0
+
+# strand off to the left of blob^3
+# x, y = -1.7868551146316527, 0
+
+# x, y = -1.7868544756698608, 0.0000011765956878669376
+x, y = 0, 0
+
+x_resolution, y_resolution = 960, 540
 # x_resolution, y_resolution = 1920, 1080
 # x_resolution, y_resolution = 2560, 1440
 # x_resolution, y_resolution = 3840, 2160
-x_resolution, y_resolution = 7680, 4320
-
-# t0 = Time.now
-
-y.each do |y|
-  x.each do |x|
-    Renderer.new(z, zoom, x, y, x_resolution, y_resolution).export_png
-  end
+# x_resolution, y_resolution = 7680, 4320
+[0].each do |zoom|
+  Renderer.new(z, 2**zoom, x, y, x_resolution, y_resolution).export_png
 end
-# # x_resolution, y_resolution = 1920, 1080
-# # x_resolution, y_resolution = 3840, 2160
-# # x_resolution, y_resolution = 7680, 4320
-# # r = Renderer.new(240, zoom, x, y, x_resolution, y_resolution).export_png
-
-
-# t1 = Time.now
-# puts "Total Time: #{t1 - t0} seconds"
-
-
-# x_resolution, y_resolution = 960, 540
-# x_resolution, y_resolution = 1920, 1080
-
-# Estimated 12 hours to complete:
-# (-10..400).each do |i|
-#   zoom = 2**(i/10.0)
-#   Renderer.new(z, zoom, x, y, x_resolution, y_resolution).export_png
-# end

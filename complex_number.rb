@@ -1,12 +1,29 @@
+require 'bigdecimal'
+
 class ComplexNumber
   attr_accessor :real_component, :nonreal_component
   
   alias_method :a, :real_component
   alias_method :b, :nonreal_component
 
-  def initialize(real_component = 0, nonreal_component = 0)
-    self.real_component = real_component
-    self.nonreal_component = nonreal_component
+  def initialize(*args)
+    # if args.size == 1
+    #   self.real_component = BigDecimal(args[:real_component])
+    #   self.nonreal_component = BigDecimal(args[:nonreal_component])
+    # else
+    #   self.real_component = BigDecimal(args[0])
+    #   self.nonreal_component = BigDecimal(args[1])
+    # end
+    if args.size == 1
+      self.real_component =  args[:real_component]
+      self.nonreal_component = args[:nonreal_component]
+    elsif args.size == 0
+      self.real_component = 0
+      self.nonreal_component = 0
+    else
+      self.real_component = args[0]
+      self.nonreal_component = args[1]
+    end
   end
 
   def magnitude
