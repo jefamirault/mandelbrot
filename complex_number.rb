@@ -38,6 +38,9 @@ class ComplexNumber
     ComplexNumber.new(a**2 - b**2, 2*a*b)
   end
 
+  def ==(complex_number)
+    a == complex_number.a && b == complex_number.b
+  end
 
   def z(iteration = 2)
     if iteration == 1
@@ -49,7 +52,7 @@ class ComplexNumber
   end
 
   # behavior of c (self) under iteration of fc(z) = z^2 + c
-  def member?(iterations = 50)
+  def member?(iterations = 40)
     z = self
     if z.magnitude >= 2
       return 0
@@ -74,4 +77,6 @@ class ComplexNumber
   end
 end
 
-
+def ComplexNumber(a,b)
+  ComplexNumber.new(a,b)
+end
