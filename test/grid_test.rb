@@ -33,10 +33,10 @@ class GridTest < Test
     test_case 'Save to file' do
       mapfile = 'mapfile_test.yaml'
       File.delete(mapfile) if File.file?(mapfile)
-      @grid = Grid.new(0,0,4,4,2, mapfile: mapfile)
+      @grid = Grid.new(0,0,6,960,540, mapfile: mapfile)
       @grid.compute_mandelbrot 20
 
-      @grid1 = Grid.new(0,0,4,4,2, mapfile: mapfile)
+      @grid1 = Grid.new(0,0,6,960,540, mapfile: mapfile)
       @grid1.compute_mandelbrot 20
     end
 

@@ -1,5 +1,5 @@
 require 'bigdecimal'
-require_relative 'complex_number'
+require_relative 'mandelbrot'
 require 'yaml'
 
 class Grid
@@ -13,7 +13,7 @@ class Grid
     if precision % 1 != 0
       raise "Invalid arguments. Precision (#{precision}) must be an integer."
     end
-    @step = 2 ** -precision
+    @step = 2 ** -precision * 1.0
     @width = width
     @height = height
     @mapfile = options[:mapfile] || DEFAULT_MAPFILE
@@ -95,20 +95,16 @@ class Grid
     end
   end
 
-  def compute_mandelbrot(iterations = 40)
+  def compute_mandelbrot(iterations = 20)
     load(@mapfile)
     reused = 0
     new_points = 0
     points.each do |point, data|
       if @map[point].nil? || @map[point] === true
         # puts "Point #{point} has not been tested for membership in the Mandelbrot Set. Computing..."
-        number = ComplexNumber.new(*point)
-        result = number.member?(iterations)
-        iterates_under_two = if result === true
-                               iterations
-                             else
-                               result
-                             end
+        number = Complex(*point)
+        check = Mandelbrot.new(number, iterations)
+        iterates_under_two = check.iterates_under_two
         @map[point] = [iterates_under_two, iterations]
         new_points += 1
       else

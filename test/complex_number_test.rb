@@ -6,45 +6,45 @@ class ComplexNumberTest < Test
     t0 = Time.now
     puts "\nRunning #{self.class}.rb...".cyan
     test_case 'Initialize Complex Number to (0, 0)' do
-      @complex_number = ComplexNumber(0, 0)
+      @complex = Complex(0, 0)
 
       test 'Real Component should be 0' do
-        assert_equal @complex_number.a, 0
+        assert_equal @complex.real, 0
       end
 
       test 'Imaginary Component should be 0' do
-        assert_equal @complex_number.b, 0
+        assert_equal @complex.imaginary, 0
       end
 
       test 'Magnitude should be 0' do
-        assert_equal @complex_number.magnitude, 0
+        assert_equal @complex.magnitude, 0
       end
     end
 
     test_case 'Initialize Complex Number: 3 + 4i' do
-      @complex_number = ComplexNumber(3,4)
+      @complex = Complex(3,4)
 
       test 'Real Component should be 3' do
-        assert_equal @complex_number.a, 3
+        assert_equal @complex.real, 3
       end
 
       test 'Imaginary Component should be 4' do
-        assert_equal @complex_number.b, 4
+        assert_equal @complex.imaginary, 4
       end
 
       test 'Magnitude should be 5' do
-        assert_equal @complex_number.magnitude, 5
+        assert_equal @complex.magnitude, 5
       end
     end
 
     test_case 'Calculate the square of 3 + 4i' do
-      @complex_number = ComplexNumber(3,4)
+      @complex = Complex(3,4)
 
       test '(3 + 4i)^2 should equal (==) -7 + 24i' do
-        assert_equal @complex_number ** 2, ComplexNumber(-7,24)
+        assert_equal @complex ** 2, Complex(-7,24)
       end
       test 'The magnitude should be 25' do
-        assert_equal (@complex_number ** 2).magnitude, 25
+        assert_equal (@complex ** 2).magnitude, 25
       end
     end
 
