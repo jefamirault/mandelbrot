@@ -8,97 +8,45 @@ class Renderer
   def initialize(grid)
     @grid = grid
     @colors = []                      #  r    g    b    a
-    @colors << ChunkyPNG::Color.rgba(  0,   0, 255, 255) # blue
-    @colors << ChunkyPNG::Color.rgba( 21,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba( 42,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba( 63,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba( 84,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(105,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(127,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(149,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(170,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(191,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(212,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(233,   0, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 255, 255) # magenta
-    @colors << ChunkyPNG::Color.rgba(255,   0, 233, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 212, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 191, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 170, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 149, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 127, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0, 105, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0,  84, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0,  63, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0,  42, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0,  21, 255)
-    @colors << ChunkyPNG::Color.rgba(255,   0,   0, 255) # red
-    @colors << ChunkyPNG::Color.rgba(255,  21,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255,  42,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255,  63,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255,  84,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 105,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 127,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 149,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 170,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 191,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 212,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 233,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(255, 255,   0, 255) # yellow
-    @colors << ChunkyPNG::Color.rgba(233, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(212, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(191, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(170, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(149, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(127, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(105, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba( 84, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba( 63, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba( 42, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba( 21, 255,   0, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255,   0, 255) # green
-    @colors << ChunkyPNG::Color.rgba(  0, 255,  21, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255,  42, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255,  63, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255,  84, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 105, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 127, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 149, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 170, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 191, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 212, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 233, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 255, 255, 255) # cyan
-    @colors << ChunkyPNG::Color.rgba(  0, 233, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 212, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 191, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 170, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 149, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 127, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0, 105, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0,  84, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0,  63, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0,  42, 255, 255)
-    @colors << ChunkyPNG::Color.rgba(  0,  21, 255, 255)
+    (0..255).each do |red|
+      @colors << ChunkyPNG::Color.rgba(red,0,255,255) # blue to purple
+    end
+    (0..255).to_a.reverse.each do |blue|
+      @colors << ChunkyPNG::Color.rgba(255,0, blue,255) # purple to red
+    end
+    (0..255).each do |green|
+      @colors << ChunkyPNG::Color.rgba(255, green,0,255) # red to yellow
+    end
+    (0..255).to_a.reverse.each do |red|
+      @colors << ChunkyPNG::Color.rgba(red,255,0,255) # yellow to green
+    end
+    (0..255).each do |blue|
+      @colors << ChunkyPNG::Color.rgba(0, 255,blue,255) # green to cyan
+    end
+    (0..255).to_a.reverse.each do |green|
+      @colors << ChunkyPNG::Color.rgba(0, green,255,255) # cyan to blue
+    end
   end
 
-  def render
+  def render(color_speed = 8)
     t0 = Time.now
     print "Applying transformations..."
+    x_min = grid.x_min
+    y_max = grid.y_max
+    step = grid.step
     transform = grid.map.map do |point, data|
-      x = (point[0] - grid.x_min) / grid.step
-      y = (point[1]*-1 + grid.y_max) / grid.step
+      x = (point[0] - x_min) / step
+      y = (point[1]*-1 + y_max) / step
       color = if data[0] == data[1]
                 ChunkyPNG::Color.rgba(0,0,0,255) # black
               else
-                @colors[(data[0] + 0) % @colors.size]
+                @colors[(data[0] + 0) * color_speed % @colors.size]
               end
       [x, y, color]
     end
 
     t1 = Time.now
     puts " (#{t1 - t0} seconds)".cyan
-
     png = ChunkyPNG::Image.new(grid.width, grid.height, ChunkyPNG::Color::TRANSPARENT)
 
     print 'Applying colors...'

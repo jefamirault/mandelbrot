@@ -76,3 +76,28 @@ end
 #   grid.compute_mandelbrot iterations
 #   Renderer.new(grid).render
 # end
+
+
+# x = 0.281717921930775
+# y = 0.5771052841488505
+# width, height = 480, 270
+# iterations = 8000
+# (6..53).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile7.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+
+
+x = 0.281717921930775
+y = 0.5771052841488505
+width, height = 975, 559
+iterations = 8000
+[48].each do |precision|
+  grid = Grid.new(x, y, precision, width, height, mapfile: 'renders/test/mapfile7.json')
+  grid.compute_mandelbrot iterations
+  renderer = Renderer.new grid
+  [7.0, 7.2, 7.4, 7.6, 7.8, 8.0, 8.2, 8.4, 8.6, 8.8, 9.0].each do |color|
+    renderer.render(color)
+  end
+end
