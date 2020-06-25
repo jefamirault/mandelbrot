@@ -14,7 +14,9 @@ class Grid
       raise "Invalid arguments. Precision (#{precision}) must be an integer."
     end
     @precision = precision
-    @step = (BigDecimal(2) ** -precision) * 1.0
+    # @step = (BigDecimal(2) ** -precision) * 1.0
+    @step = 2 ** -precision
+
     @center_x = nearest_step(x, @step)
     @center_y = nearest_step(y, @step)
 
@@ -101,10 +103,10 @@ class Grid
   def load(mapfile = DEFAULT_MAPFILE)
     t0 = Time.now
     @map = if File.file?(mapfile)
-      print "Loading mapfile: #{mapfile}..."
+      print "Loading mapfile: " + "#{mapfile}".cyan + "..."
       JSON.parse(File.open(mapfile).read).to_h || {}
     else
-      print "Creating mapfile: #{mapfile}..."
+      print "Creating mapfile: " + "#{mapfile}".cyan + "..."
       File.open mapfile, 'w'
       {} end
     t1 = Time.now - t0
@@ -125,9 +127,10 @@ class Grid
   def compute_mandelbrot(iterations = 20)
     load(@mapfile)
 
-    puts "Using Center: (#{center_x}, #{center_y}), Step: #{step}, Resolution: #{width}x#{height}"
+    puts "Using Center: " + "(" + "#{center_x}".cyan + ", " + "#{center_y}".cyan + "), Step: " + "#{step}".cyan + ", Resolution: " + "#{width}x#{height}".cyan
+    puts "Top Left Corner:  (" + "#{x_min}".cyan + ", " + "#{y_max}".cyan + ")" + ", Bottom Right Corner: " + "(" + "#{x_max}".cyan + ", " + "#{y_min}".cyan + ")"
 
-    print "Analyzing #{number_of_points} points at #{iterations} iterations..."
+    print "Analyzing #{number_of_points} points at " + "#{iterations}".cyan + " iterations..."
     t0 = Time.now
     reused = 0
     new_points = 0

@@ -6,33 +6,73 @@ class MandelbrotFactory
 end
 
 
-# from the internet!
-x = 0.2549870375144766
-y = -0.0005679790528465
-
-# x = -0.7463
-# y = 0.1102
-
-# x, y = -0.4170662, 0.60295913
-# x, y = 0, 0
-#
-width, height = 3840, 2160
-# width, height = 1920, 1080
-# width, height = 960, 540
-# width, height = 480, 270
+# x = 0.2549870375144766
+# y = -0.0005679790528465
 # width, height = 240, 135
-# width, height = 2,2
-precision = 27
-iterations = 500
-
-grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile1.json')
-grid.compute_mandelbrot iterations
-Renderer.new(grid).render
-
-#
-# (12..24).each do |precision|
-#   grid = Grid.new(x,y,precision, width, height, mapfile: 'mapfile.json')
+# iterations = 500
+# (6..30).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile1.json')
 #   grid.compute_mandelbrot iterations
 #   Renderer.new(grid).render
 # end
 #
+#
+# x = -0.7463
+# y = 0.1102
+# width, height = 240, 135
+# iterations = 500
+# (6..21).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile2.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+#
+# x, y = -0.4170662, 0.60295913
+# width, height = 240, 135
+# iterations = 500
+# (6..24).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile3.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+#
+# x = -0.7453
+# y = 0.1127
+# width, height = 240, 135
+# iterations = 500
+# (6..21).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile4.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+#
+# x = -1.315180982097868
+# y = 0.073481649996795
+# width, height = 240, 135
+# iterations = 500
+# (6..30).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile5.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+
+# x = 0.281717921930775
+# y = 0.5771052841488505
+# width, height = 240, 135
+# iterations = 1000
+# (6..50).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile6.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end
+
+#
+# x = 0.281717921930775
+# y = 0.5771052841488505
+# width, height = 480, 270
+# iterations = 8000
+# (6..53).each do |precision|
+#   grid = Grid.new(x, y, precision, width, height, mapfile: 'mapfile7.json')
+#   grid.compute_mandelbrot iterations
+#   Renderer.new(grid).render
+# end

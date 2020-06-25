@@ -96,9 +96,11 @@ class Renderer
       [x, y, color]
     end
 
-    png = ChunkyPNG::Image.new(grid.width, grid.height, ChunkyPNG::Color::TRANSPARENT)
     t1 = Time.now
     puts " (#{t1 - t0} seconds)".cyan
+
+    png = ChunkyPNG::Image.new(grid.width, grid.height, ChunkyPNG::Color::TRANSPARENT)
+
     print 'Applying colors...'
     transform.each do |pixel|
       x = pixel[0].round
@@ -119,7 +121,7 @@ class Renderer
     print "Exporting to #{filename}"
     if png.save(filename, :interlace => true)
       t3 = Time.now
-      puts "( #{t3-t2} seconds)".cyan
+      puts " (#{t3-t2} seconds)".cyan
     else
       'Export error.'.red
     end
