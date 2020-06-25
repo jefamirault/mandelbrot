@@ -1,11 +1,11 @@
 require 'bigdecimal'
 require_relative 'mandelbrot'
-require 'yaml'
+require 'json'
 
 class Grid
   attr_accessor :center_x, :center_y, :step, :width, :height, :map, :mapfile
 
-  DEFAULT_MAPFILE = 'mapfile.yaml'
+  DEFAULT_MAPFILE = 'mapfile.json'
 
   def initialize(x = 0, y = 0, precision = 2, width = 16, height = 9, options = {})
     @center_x = x
@@ -80,9 +80,15 @@ class Grid
     @map.to_yaml options
   end
 
-  def load(mapfile)
+  def to_a
+    @map.map do |point, data|
+      [point[0], point[1], data[0], data[1]]
+    end
+  end
+
+  def load(mapfile = DEFAULT_MAPFILE)
     @map = if File.file?(mapfile)
-      YAML.load(File.open(mapfile).read) || {}
+      JSON.parse(File.open(mapfile).read).to_h || {}
     else
       File.open mapfile, 'w'
       {}
@@ -91,7 +97,7 @@ class Grid
 
   def write(mapfile, options = {})
     if options[:overwrite]
-      File.write(mapfile, self.to_yaml)
+      File.write(mapfile, @map.to_a)
     end
   end
 
