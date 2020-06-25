@@ -20,6 +20,14 @@ class Mandelbrot
     @iterations
   end
 
+  def iteration_z(z)
+    if z == 1
+      @number
+    else
+      iteration_z(z - 1) ** 2 + @number
+    end
+  end
+
   def member?
     iterates_under_two == iterations
   end

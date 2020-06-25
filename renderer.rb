@@ -84,6 +84,7 @@ class Renderer
 
   def render
     t0 = Time.now
+    print "Applying transformations..."
     transform = grid.map.map do |point, data|
       x = (point[0] - grid.x_min) / grid.step
       y = (point[1]*-1 + grid.y_max) / grid.step
@@ -97,8 +98,8 @@ class Renderer
 
     png = ChunkyPNG::Image.new(grid.width, grid.height, ChunkyPNG::Color::TRANSPARENT)
     t1 = Time.now
-    puts "Transformations completed in #{t1 - t0} seconds"
-    puts 'Applying colors...'
+    puts " (#{t1 - t0} seconds)".cyan
+    print 'Applying colors...'
     transform.each do |pixel|
       x = pixel[0].round
       y = pixel[1].round
@@ -113,11 +114,14 @@ class Renderer
     end
 
     t2 = Time.now
-    puts "Colors added in #{t2 - t1} seconds"
-    puts 'Saving...'
-    filename ||= "renders/#{Time.now.to_i}_center#{grid.center_x}_#{grid.center_y}_step#{grid.step}_#{grid.width}x#{grid.height}.png"
+    puts " (#{t2 - t1} seconds)".cyan
+    filename ||= "renders/#{Time.now.to_i}_center#{grid.center_x.to_f}_#{grid.center_y.to_f}_p#{grid.precision}_#{grid.width}x#{grid.height}.png"
+    print "Exporting to #{filename}"
     if png.save(filename, :interlace => true)
-      puts "Exported to #{filename}"
+      t3 = Time.now
+      puts "( #{t3-t2} seconds)".cyan
+    else
+      'Export error.'.red
     end
   end
 end

@@ -1,18 +1,23 @@
 require_relative 'mandelbrot'
 require 'json'
+require 'bigdecimal'
+require 'colorize'
+
 
 class Grid
-  attr_accessor :center_x, :center_y, :step, :width, :height, :map, :mapfile
+  attr_accessor :center_x, :center_y, :precision, :step, :width, :height, :map, :mapfile
 
   DEFAULT_MAPFILE = 'mapfile.json'
 
   def initialize(x = 0, y = 0, precision = 2, width = 16, height = 9, options = {})
-    @center_x = x
-    @center_y = y
     if precision % 1 != 0
       raise "Invalid arguments. Precision (#{precision}) must be an integer."
     end
-    @step = 2 ** -precision * 1.0
+    @precision = precision
+    @step = (BigDecimal(2) ** -precision) * 1.0
+    @center_x = nearest_step(x, @step)
+    @center_y = nearest_step(y, @step)
+
     @width = width
     @height = height
     @mapfile = options[:mapfile] || DEFAULT_MAPFILE
@@ -63,7 +68,7 @@ class Grid
     while x <= x_max
       y = y_max
       while y >= y_min
-        hash[[x,y]] = true
+        hash[[x.to_f,y.to_f]] = true
         y -= @step
       end
       x += @step
@@ -73,6 +78,14 @@ class Grid
 
   def point(x, y)
     @map[[x,y]]
+  end
+
+  def number_of_points
+    width * height
+  end
+
+  def nearest_step(number, step)
+    ((number / step).round * step) * 1.0
   end
 
   def to_yaml(options = nil)
@@ -86,22 +99,36 @@ class Grid
   end
 
   def load(mapfile = DEFAULT_MAPFILE)
+    t0 = Time.now
     @map = if File.file?(mapfile)
+      print "Loading mapfile: #{mapfile}..."
       JSON.parse(File.open(mapfile).read).to_h || {}
     else
+      print "Creating mapfile: #{mapfile}..."
       File.open mapfile, 'w'
-      {}
-    end
+      {} end
+    t1 = Time.now - t0
+    puts " (#{t1} seconds)".cyan
+    mapfile
   end
 
   def write(mapfile, options = {})
+    puts 'Updating mapfile...'
+    t0 = Time.now
     if options[:overwrite]
       File.write(mapfile, @map.to_a)
     end
+    t1 = Time.now - t0
+    puts "Saved to #{@mapfile} (#{t1} seconds)".green
   end
 
   def compute_mandelbrot(iterations = 20)
     load(@mapfile)
+
+    puts "Using Center: (#{center_x}, #{center_y}), Step: #{step}, Resolution: #{width}x#{height}"
+
+    print "Analyzing #{number_of_points} points at #{iterations} iterations..."
+    t0 = Time.now
     reused = 0
     new_points = 0
     points.each do |point, data|
@@ -117,9 +144,11 @@ class Grid
         reused += 1
       end
     end
-    puts "#{reused} points reused. #{new_points} new points computed."
+    t1 = Time.now - t0
+    puts " (#{t1}) seconds".cyan
+    puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan
+
     if new_points > 0
-      puts "Updating mapfile..."
       write(@mapfile, overwrite: true)
     end
   end
