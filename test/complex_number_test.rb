@@ -1,5 +1,4 @@
 require_relative 'test'
-require_relative '../complex_number'
 
 class ComplexNumberTest < Test
   def run
@@ -48,17 +47,6 @@ class ComplexNumberTest < Test
       end
     end
 
-    test_case 'Consider whether 1 + 0i is a member of the Mandelbrot Set within 10 iterations' do
-      @complex_number = ComplexNumber(1, 0)
-
-      test '1 + 0i should not be part of the Mandelbrot Set' do
-        assert_equal @complex_number.member?(10).class, Integer
-      end
-
-      test '1 + 0i should have 1 iterate under 2' do
-        assert_equal @complex_number.member?(10), 1
-      end
-    end
     t1 = Time.now
     @benchmark = t1 - t0
   end

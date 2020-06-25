@@ -32,7 +32,7 @@ class GridTest < Test
 
     test_case 'Save to file' do
       mapfile = 'mapfile_test.json'
-      width, height = 960, 540
+      width, height = 480, 270
       File.delete(mapfile) if File.file?(mapfile)
       @grid = Grid.new(0,0,7,width,height, mapfile: mapfile)
       @grid.compute_mandelbrot 20

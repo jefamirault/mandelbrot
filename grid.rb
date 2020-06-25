@@ -1,4 +1,3 @@
-require 'bigdecimal'
 require_relative 'mandelbrot'
 require 'json'
 
@@ -118,7 +117,10 @@ class Grid
         reused += 1
       end
     end
-    puts "#{reused} points reused. #{new_points} new points computed. Updating mapfile..."
-    write(@mapfile, overwrite: true)
+    puts "#{reused} points reused. #{new_points} new points computed."
+    if new_points > 0
+      puts "Updating mapfile..."
+      write(@mapfile, overwrite: true)
+    end
   end
 end
