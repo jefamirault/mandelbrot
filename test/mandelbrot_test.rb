@@ -32,7 +32,10 @@ class MandelbrotTest < Test
       end
     end
 
+    test_case 'High Precision Test' do
 
+
+    end
 
 
 

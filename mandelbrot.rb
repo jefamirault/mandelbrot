@@ -1,3 +1,4 @@
+require 'bigdecimal'
 class Mandelbrot
   attr_accessor :number, :iterations
 

@@ -28,7 +28,7 @@ class Renderer
     end
   end
 
-  def render(color_speed = 8)
+  def render(color_speed = 12)
     t0 = Time.now
     print "Applying transformations..."
     x_min = grid.x_min
@@ -66,7 +66,7 @@ class Renderer
     t2 = Time.now
     puts " (#{t2 - t1} seconds)".cyan
     filename ||= "renders/#{Time.now.to_i}_center#{grid.center_x.to_f}_#{grid.center_y.to_f}_p#{grid.precision}_#{grid.width}x#{grid.height}.png"
-    print "Exporting to #{filename}"
+    print "Exporting to #{filename}".green
     if png.save(filename, :interlace => true)
       t3 = Time.now
       puts " (#{t3-t2} seconds)".cyan

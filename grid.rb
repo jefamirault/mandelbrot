@@ -14,6 +14,7 @@ class Grid
       raise "Invalid arguments. Precision (#{precision}) must be an integer."
     end
     @precision = precision
+    # BigDecimal.limit(40)
     # @step = (BigDecimal(2) ** -precision) * 1.0
     @step = 2 ** -precision
 
@@ -66,13 +67,17 @@ class Grid
 
   def points
     hash = {}
+    # x = BigDecimal(x_min.to_s)
     x = x_min
     while x <= x_max
+      # y = BigDecimal(y_max.to_s)
       y = y_max
       while y >= y_min
-        hash[[x.to_f,y.to_f]] = true
+        hash[[x, y]] = true
+        # y -= BigDecimal(@step.to_f.to_s)
         y -= @step
       end
+      # x += BigDecimal(@step.to_f.to_s)
       x += @step
     end
     hash
@@ -103,7 +108,7 @@ class Grid
   def load(mapfile = DEFAULT_MAPFILE)
     t0 = Time.now
     @map = if File.file?(mapfile)
-      print "Loading mapfile: " + "#{mapfile}".cyan + "..."
+      print "Loading mapfile: ".green + "#{mapfile}".cyan + "..."
       JSON.parse(File.open(mapfile).read).to_h || {}
     else
       print "Creating mapfile: " + "#{mapfile}".cyan + "..."
@@ -125,17 +130,19 @@ class Grid
   end
 
   def compute_mandelbrot(iterations = 20)
-    load(@mapfile)
+    load(@mapfile) if @map.nil?
 
-    puts "Using Center: " + "(" + "#{center_x}".cyan + ", " + "#{center_y}".cyan + "), Step: " + "#{step}".cyan + ", Resolution: " + "#{width}x#{height}".cyan
+    puts "Using Center: " + "(" + "#{center_x}".cyan + ", " + "#{center_y}".cyan + "), Step: " + "#{step}".cyan + ", Precision: " + "#{@precision}".cyan + ", Resolution: " + "#{width}x#{height}".cyan
     puts "Top Left Corner:  (" + "#{x_min}".cyan + ", " + "#{y_max}".cyan + ")" + ", Bottom Right Corner: " + "(" + "#{x_max}".cyan + ", " + "#{y_min}".cyan + ")"
 
     print "Analyzing #{number_of_points} points at " + "#{iterations}".cyan + " iterations..."
     t0 = Time.now
     reused = 0
     new_points = 0
+
+
     points.each do |point, data|
-      if @map[point].nil? || @map[point] === true
+      if @map[point].nil? # || @map[point] === true
         # puts "Point #{point} has not been tested for membership in the Mandelbrot Set. Computing..."
         number = Complex(*point)
         check = Mandelbrot.new(number, iterations)
