@@ -16,9 +16,14 @@ class MandelbrotFactory
   def run(prefix = nil)
     @resolutions.each do |resolution|
       precisions.each do |precision|
+        puts "Creating grid".cyan + ", " + "precision".cyan + " = " + "#{precision}".red
+        t0 = Time.now
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
         grid.compute_mandelbrot @iterations
         Renderer.new(grid).render export_location: @export_location, prefix: prefix
+
+        t1 = Time.now - t0
+        puts "Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
       end
     end
   end
@@ -60,7 +65,7 @@ end
 class SeahorseTailFactory < MandelbrotFactory
   X_COORDINATE = -0.7453
   Y_COORDINATE = 0.1127
-  ITERATIONS = 500
+  ITERATIONS = 1000
   START_PRECISION = 6
   END_PRECISION = 21
   def initialize(resolutions, options = {})

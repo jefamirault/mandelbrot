@@ -9,21 +9,22 @@ class RenderTest < Test
     test_resolutions = Renderer::RESOLUTIONS[3..3]
 
     # SINGLE BATCH TEST
-    # run_batch CuspFactory.new(test_resolutions, export_location: 'renders/test/cusp', mapfile: 'renders/test/cusp/mapfile.json')
-
+    factory = CuspFactory.new(test_resolutions, export_location: 'renders/test/cusp', mapfile: 'renders/test/cusp/mapfile.json')
+    factory.precisions = (6..24)
+    run_batch factory
     # ALL BATCHES TEST
-    batches = [CuspFactory, SeahorseFactory, FlowerFactory, SeahorseTailFactory, LightningFactory, PinwheelBladeFactory].map do |factory|
-      factory.new(test_resolutions)
-    end
-
-    puts "Running #{batches.size} Render Tests..."
-
-    batches.each do |batch|
-      run_batch batch
-    end
+    # # batches = [CuspFactory, SeahorseFactory, FlowerFactory, SeahorseTailFactory, LightningFactory, PinwheelBladeFactory].map do |factory|
+    # #   factory.new(test_resolutions)
+    # # end
+    #
+    # puts "Running #{batches.size} Render Tests..."
+    #
+    # batches.each do |batch|
+    #   run_batch batch
+    # end
 
     t1 = Time.now - t0
-    puts "Completed Render Tests in #{t1} seconds"
+    puts "Render Tests complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
   end
 
   def run_batch(factory, name = nil)
@@ -33,7 +34,7 @@ class RenderTest < Test
     factory.run
 
     t1 = Time.now - t0
-    puts "Batch complete in #{t1} seconds."
+    puts "Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
   end
 
 end

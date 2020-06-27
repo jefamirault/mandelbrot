@@ -70,10 +70,11 @@ class Renderer
     end
 
     t1 = Time.now
-    puts " (#{t1 - t0} seconds)".cyan
+    benchmark = t1 - t0
+    puts " (" + "#{benchmark.round(3)}".cyan + " seconds)"
     png = ChunkyPNG::Image.new(grid.width, grid.height, ChunkyPNG::Color::TRANSPARENT)
 
-    print 'Applying colors...'
+    # print 'Applying colors...' # verbose
     transform.each do |pixel|
       x = pixel[0].round
       y = pixel[1].round
@@ -88,14 +89,15 @@ class Renderer
     end
 
     t2 = Time.now
-    puts " (#{t2 - t1} seconds)".cyan
+    # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || Time.now.to_f
     filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision}.png"
-    print "Exporting to #{filename}".green
+    print "Exporting" + " to " + "#{filename}".green
     if png.save(filename, :interlace => true)
       t3 = Time.now
-      puts " (#{t3-t2} seconds)".cyan
+      benchmark = t3-t2
+      puts " (" + "#{benchmark.round(3)}".cyan + " seconds)"
     else
       'Export error.'.red
     end

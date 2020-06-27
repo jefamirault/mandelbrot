@@ -108,14 +108,14 @@ class Grid
   def load(mapfile = DEFAULT_MAPFILE)
     t0 = Time.now
     @map = if File.file?(mapfile)
-      print "Loading mapfile: ".green + "#{mapfile}".cyan + "..."
+      print "Loading mapfile: " + "#{mapfile}".green
       JSON.parse(File.open(mapfile).read).to_h || {}
     else
       print "Creating mapfile: " + "#{mapfile}".cyan + "..."
       File.open mapfile, 'w'
       {} end
     t1 = Time.now - t0
-    puts " (#{t1} seconds)".cyan
+    puts " (" + "#{t1.round(3)}".cyan + " seconds)"
     mapfile
   end
 
@@ -126,21 +126,20 @@ class Grid
       File.write(mapfile, @map.to_a)
     end
     t1 = Time.now - t0
-    puts "Saved to #{@mapfile} (#{t1} seconds)".green
+    puts "Saved to " + "#{@mapfile}".green + " (" + "#{t1}".cyan + " seconds)"
   end
 
   def compute_mandelbrot(iterations = 20)
+    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Step".cyan + ": " + "#{step}".red + ", " + "Precision".cyan + ": " + "#{@precision}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
+    puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
+
     load(@mapfile) if @map.nil?
 
-    puts "Using Center: " + "(" + "#{center_x}".cyan + ", " + "#{center_y}".cyan + "), Step: " + "#{step}".cyan + ", Precision: " + "#{@precision}".cyan + ", Resolution: " + "#{width}x#{height}".cyan
-    puts "Top Left Corner:  (" + "#{x_min}".cyan + ", " + "#{y_max}".cyan + ")" + ", Bottom Right Corner: " + "(" + "#{x_max}".cyan + ", " + "#{y_min}".cyan + ")"
-
-    print "Analyzing #{number_of_points} points at " + "#{iterations}".cyan + " iterations..."
+    print "Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now
+
     reused = 0
     new_points = 0
-
-
     points.each do |point, data|
       if @map[point].nil? # || @map[point] === true
         # puts "Point #{point} has not been tested for membership in the Mandelbrot Set. Computing..."
@@ -155,7 +154,7 @@ class Grid
       end
     end
     t1 = Time.now - t0
-    puts " (#{t1}) seconds".cyan
+    puts " (" + "#{t1.round(3)}".cyan + " seconds)"
     puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan
 
     if new_points > 0
