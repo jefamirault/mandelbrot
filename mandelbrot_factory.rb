@@ -48,7 +48,7 @@ class ZoomedOutFactory < MandelbrotFactory
   X_COORDINATE = 0
   Y_COORDINATE = 0
   ITERATIONS = 1000
-  START_PRECISION = 4
+  START_PRECISION = 6
   END_PRECISION = 14
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
@@ -61,7 +61,7 @@ class CuspFactory < MandelbrotFactory
   Y_COORDINATE = -0.0005679790528465
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 36
+  END_PRECISION = 21
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -72,7 +72,7 @@ class SeahorseFactory < MandelbrotFactory
   Y_COORDINATE = 0.1102
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 21
+  END_PRECISION = 16
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -83,7 +83,7 @@ class FlowerFactory < MandelbrotFactory
   Y_COORDINATE = 0.60295913
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 38
+  END_PRECISION = 27
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -94,7 +94,7 @@ class SeahorseTailFactory < MandelbrotFactory
   Y_COORDINATE = 0.1127
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 21
+  END_PRECISION = 17
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -103,9 +103,9 @@ end
 class LightningFactory < MandelbrotFactory
   X_COORDINATE = -1.315180982097868
   Y_COORDINATE = 0.073481649996795
-  ITERATIONS = 500
+  ITERATIONS = 2000
   START_PRECISION = 6
-  END_PRECISION = 30
+  END_PRECISION = 56
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end

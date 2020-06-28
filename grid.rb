@@ -138,7 +138,7 @@ class Grid
   end
 
   def write(mapfile, options = {})
-    print timestamp + "Updating mapfile: " + "#{@mapfile}".green
+    print timestamp + " Updating mapfile: " + "#{@mapfile}".green
     t0 = Time.now
     if options[:overwrite]
       File.write(mapfile, @map.to_a)
@@ -148,7 +148,7 @@ class Grid
   end
 
   def compute_mandelbrot(iterations = 20)
-    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Step".cyan + ": " + "#{step}".red + ", " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
+    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
     load(@mapfile) if @map.nil?
