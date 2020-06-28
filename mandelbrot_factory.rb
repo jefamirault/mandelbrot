@@ -2,7 +2,7 @@ require_relative 'grid'
 require_relative 'renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions
+  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions, :map
 
   def initialize(x, y, iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
@@ -27,9 +27,9 @@ class MandelbrotFactory
     puts "#{timestamp} " + "Running Batch Render... "
 
 
-    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: @mapfile)
-    dummy_grid.load
-    map = dummy_grid.map
+    # dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: @mapfile)
+    # dummy_grid.load
+    # @map = dummy_grid.map
 
     @resolutions.each do |resolution|
       precisions.each do |precision|
@@ -38,7 +38,7 @@ class MandelbrotFactory
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
 
         puts 'Mapfile already loaded.'
-        grid.map = map
+        grid.map = @map
 
         grid.compute_mandelbrot @iterations
         Renderer.new(grid).render export_location: @export_location, prefix: prefix
@@ -48,16 +48,31 @@ class MandelbrotFactory
       end
     end
 
-    dummy_grid.write @mapfile, overwrite: true
+    # unless options[:more_batches]
+    #   dummy_grid.write @mapfile, overwrite: true
+    # end
+
 
     t1 = Time.now - t0
     puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
     { resolutions: resolutions, precisions: precisions, benchmark: t1 }
   end
+
+  def load_mapfile
+    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: mapfile)
+    dummy_grid.load
+    @map = dummy_grid.map
+  end
+
+  def write_mapfile(mapfile = @mapfile)
+    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: mapfile)
+    dummy_grid.map = @map
+    dummy_grid.write
+  end
 end
 
-class ZoomedOutFactory < MandelbrotFactory
-  X_COORDINATE = 0
+class ZoomZeroFactory < MandelbrotFactory
+  X_COORDINATE = -0.75
   Y_COORDINATE = 0
   ITERATIONS = 1000
   START_PRECISION = 6

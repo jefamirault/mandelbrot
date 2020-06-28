@@ -171,17 +171,11 @@ class Grid
         reused += 1
       end
     end
+
     t1 = Time.now - t0
     puts " (" + "#{t1.round(3)}".cyan + " seconds)"
     puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan
 
-    if new_points > 0
-      puts "New points mapped..."
-      puts "Not updating mapfile...".red
-      # write(@mapfile, overwrite: true)
-    else
-      puts "no new points mapped"
-    end
     { reused: reused, new_points: new_points, benchmark: t1}
   end
 

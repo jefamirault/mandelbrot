@@ -30,8 +30,8 @@ res << [5200, 4800]
 #
 #
 resolutions = res
-zoomed_out = ZoomedOutFactory.new(resolutions, mapfile: 'renders/zoomed_out/mapfile.json', export_location: 'renders/zoomed_out')
-zoomed_out.precisions = [10]
-zoomed_out.iterations = 1000
-zoomed_out.center = [-0.7, 0 ]
-zoomed_out.run
+factory = ZoomZeroFactory.new(resolutions, mapfile: 'renders/zoom_zero/mapfile.json', export_location: 'renders/zoom_zero')
+factory.precisions = [10]
+factory.iterations = 1000
+factory.center = [-0.7, 0 ]
+factory.run
