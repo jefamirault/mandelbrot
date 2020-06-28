@@ -51,52 +51,113 @@ class RenderTest < Test
 
 
     # Single Tests
-    zoom_zero = ZoomZeroFactory.new Renderer::RESOLUTIONS[7..7], export_location: 'renders/test/zoom_zero', mapfile: 'renders/test/zoom_zero/mapfile.json'
-    zoom_zero.iterations = 100
-    zoom_zero.precisions = (4..4)
-    zoom_zero.load_mapfile
-
-    run_batch zoom_zero
-
-    zoom_zero.resolutions = Renderer::RESOLUTIONS[10..10]
-    zoom_zero.precisions = (6..6)
-    run_batch zoom_zero
-
-    # zoom_zero.resolutions = Renderer::RESOLUTIONS[11..11]
+    #
+    # Zoom Zero Hi Res
+    # zoom_zero = ZoomZeroFactory.new [[64, 64]], export_location: 'renders/test/zoom_zero', mapfile: 'renders/test/zoom_zero/mapfile.json'
+    # zoom_zero.iterations = 6
+    # zoom_zero.precisions = (4..4)
+    # zoom_zero.load_mapfile
+    # run_batch zoom_zero
+    #
+    # zoom_zero.resolutions = [[150, 150]]
+    # zoom_zero.precisions = (5..5)
+    # run_batch zoom_zero
+    #
+    # zoom_zero.resolutions = [[270, 270]]
+    # zoom_zero.precisions = (6..6)
+    # run_batch zoom_zero
+    #
+    # zoom_zero.resolutions = [[540, 540]]
     # zoom_zero.precisions = (7..7)
     # run_batch zoom_zero
 
-    zoom_zero.resolutions = Renderer::RESOLUTIONS[12..12] # 960x540
-    zoom_zero.precisions = (7..7)
-    run_batch zoom_zero
+    # zoom_zero.resolutions = [[1400, 1200]]
+    # zoom_zero.precisions = (8..8)
+    # run_batch zoom_zero
 
-    zoom_zero.resolutions = Renderer::RESOLUTIONS[13..13] # 1280x720
-    zoom_zero.precisions = (8..8)
-    run_batch zoom_zero
+    # zoom_zero.resolutions = [[2800, 2400]]
+    # zoom_zero.precisions = (9..9)
+    # run_batch zoom_zero
 
-    zoom_zero.write_mapfile
+    # zoom_zero.write_mapfile
 
 
-    def cusp_test
-      test_resolutions = Renderer::RESOLUTIONS[5..5]
-      factory = CuspFactory.new(test_resolutions, export_location: 'renders/test/cusp', mapfile: 'renders/test/cusp/mapfile99.json')
-      factory.resolutions = test_resolutions
-      factory.precisions = (5..5)
-      run_batch factory
+    # Iteration Tour
+
+    factory = ZoomZeroFactory.new [[150, 150]], export_location: 'renders/test/zoom_zero' #, mapfile: "renders/test/zoom_zero/mapfile#{iteration}.json"
+
+    factory.center = [0, 0]
+    factory.precisions = (4..4)
+    (1..3).each do |iteration|
+      factory.iterations = iteration
+      # zoom_zero.run
     end
+
+    factory.center = [-0.63, 0]
+    # zoom_zero.run
+
+    factory.precisions = (5..5)
+    (3..6).each do |iteration|
+      factory.iterations = iteration
+      # zoom_zero.run
+    end
+
+    factory.resolutions = [[320, 300]]
+    # zoom_zero.run
+
+    factory.precisions = (6..6)
+    (6..8).each do |iteration|
+      factory.iterations = iteration
+      # zoom_zero.run
+    end
+
+    factory.resolutions = [[600, 570]]
+    # zoom_zero.run
+
+    factory.precisions = (7..7)
+    (8..10).each do |iteration|
+      factory.iterations = iteration
+      # zoom_zero.run
+    end
+
+    factory.resolutions = [[1300, 1150]]
+    # zoom_zero.run
+
+    factory.precisions = (8..8)
+    factory.iterations = 10
+    # zoom_zero.run
+
+    factory.center = [-0.7, 0]
+    # zoom_zero.run
+
+    (11..20).each do |iteration|
+      factory.iterations = iteration
+      # zoom_zero.run
+    end
+
+    factory.resolutions = [[2600, 2300]]
+    factory.precisions = (9..9)
+
+    (11..20).each do |iteration|
+      factory.iterations = iteration
+      factory.run
+    end
+
+
+    [15, 25, 40, 60, 100]
 
 
     t1 = Time.now - t0
     puts "#{timestamp}" + " Render Tests complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n\n"
   end
 
-  def run_batch(factory, name = nil)
-    t0 = Time.now
-
-    factory.run
-
-    t1 = Time.now - t0
-  end
+  # def run_batch(factory, name = nil)
+  #   t0 = Time.now
+  #
+  #   factory.run
+  #
+  #   t1 = Time.now - t0
+  # end
 
   private
 

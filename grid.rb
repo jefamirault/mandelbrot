@@ -37,6 +37,7 @@ class Grid
     @width = width
     @height = height
     @mapfile = options[:mapfile] || DEFAULT_MAPFILE
+    @map = {}
   end
 
   def precise_step
@@ -151,7 +152,9 @@ class Grid
     puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
-    load(@mapfile) if @map.nil?
+    # load(@mapfile) if @map.nil?
+
+    @map ||= {}
 
     print timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now

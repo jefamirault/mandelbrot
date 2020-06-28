@@ -93,7 +93,7 @@ class Renderer
     t2 = Time.now
     # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
-    prefix = options[:prefix] || Time.now.to_f
+    prefix = options[:prefix] || ("%.7f" % Time.now.to_f)
     filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
     if png.save(filename, :interlace => true)

@@ -22,6 +22,7 @@ class MandelbrotFactory
     "[#{Time.now.strftime('%T.%L')}]".magenta
   end
 
+  # TODO use options hash
   def run(prefix = nil)
     t0 = Time.now
     puts "#{timestamp} " + "Running Batch Render... "
@@ -37,7 +38,6 @@ class MandelbrotFactory
         t0 = Time.now
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
 
-        puts 'Mapfile already loaded.'
         grid.map = @map
 
         grid.compute_mandelbrot @iterations
