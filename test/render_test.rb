@@ -63,10 +63,10 @@ class RenderTest < Test
       # run_batch lightning
 
       seahorse = SeahorseFactory.new test_resolutions, export_location: 'renders/test/seahorse', mapfile: 'renders/test/seahorse/mapfile.json'
-      # run_batch seahorse
+      run_batch seahorse
 
       flower = FlowerFactory.new test_resolutions, export_location: 'renders/test/flower', mapfile: 'renders/test/flower/mapfile.json'
-      run_batch flower
+      # run_batch flower
 
       seahorse_tail = SeahorseTailFactory.new test_resolutions, export_location: 'renders/test/seahorse_tail', mapfile: 'renders/test/seahorse_tail/mapfile.json'
       # run_batch seahorse_tail
@@ -75,16 +75,18 @@ class RenderTest < Test
       # run_batch pinwheel_blade
     end
 
-    test_resolutions = Renderer::RESOLUTIONS[6..7]
+    test_resolutions = Renderer::RESOLUTIONS[7..7] # 144x81
     # all(test_resolutions)
     test_resolutions = Renderer::RESOLUTIONS[8..9]
     # all(test_resolutions)
-    test_resolutions = Renderer::RESOLUTIONS[10..10]
-    all(test_resolutions)
+    test_resolutions = Renderer::RESOLUTIONS[10..11]
+    # all(test_resolutions)
     test_resolutions = Renderer::RESOLUTIONS[12..13]
     # all(test_resolutions)
-    test_resolutions = Renderer::RESOLUTIONS[14]
+    test_resolutions = Renderer::RESOLUTIONS[14] # 1920x1080
     # all(test_resolutions)
+    test_resolutions = Renderer::RESOLUTIONS[15] # 2560x1440
+    all(test_resolutions)
 
 
     def cusp_test

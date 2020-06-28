@@ -123,7 +123,7 @@ class Grid
     end
   end
 
-  def load(mapfile = DEFAULT_MAPFILE)
+  def load(mapfile = @mapfile)
     t0 = Time.now
     @map = if File.file?(mapfile)
       print "#{timestamp}" + " Loading mapfile: " + "#{mapfile}".green
@@ -137,7 +137,7 @@ class Grid
     mapfile
   end
 
-  def write(mapfile, options = {})
+  def write(mapfile = @mapfile, options = {})
     print timestamp + " Updating mapfile: " + "#{@mapfile}".green
     t0 = Time.now
     if options[:overwrite]
@@ -176,7 +176,11 @@ class Grid
     puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan
 
     if new_points > 0
-      write(@mapfile, overwrite: true)
+      puts "New points mapped..."
+      puts "Not updating mapfile...".red
+      # write(@mapfile, overwrite: true)
+    else
+      puts "no new points mapped"
     end
     { reused: reused, new_points: new_points, benchmark: t1}
   end

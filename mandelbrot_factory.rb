@@ -26,11 +26,20 @@ class MandelbrotFactory
     t0 = Time.now
     puts "#{timestamp} " + "Running Batch Render... "
 
+
+    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: @mapfile)
+    dummy_grid.load
+    map = dummy_grid.map
+
     @resolutions.each do |resolution|
       precisions.each do |precision|
         puts "#{timestamp} " + "Creating grid..."
         t0 = Time.now
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
+
+        puts 'Mapfile already loaded.'
+        grid.map = map
+
         grid.compute_mandelbrot @iterations
         Renderer.new(grid).render export_location: @export_location, prefix: prefix
 
@@ -38,6 +47,9 @@ class MandelbrotFactory
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
       end
     end
+
+    dummy_grid.write @mapfile, overwrite: true
+
     t1 = Time.now - t0
     puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
     { resolutions: resolutions, precisions: precisions, benchmark: t1 }
@@ -72,7 +84,7 @@ class SeahorseFactory < MandelbrotFactory
   Y_COORDINATE = 0.1102
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 16
+  END_PRECISION = 17
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -83,7 +95,7 @@ class FlowerFactory < MandelbrotFactory
   Y_COORDINATE = 0.60295913
   ITERATIONS = 1000
   START_PRECISION = 6
-  END_PRECISION = 27
+  END_PRECISION = 24
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
