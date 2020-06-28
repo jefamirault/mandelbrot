@@ -2,7 +2,7 @@ require_relative 'grid'
 require_relative 'renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location
+  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions
 
   def initialize(x, y, iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
@@ -10,24 +10,51 @@ class MandelbrotFactory
     @export_location = options[:export_location] || 'renders'
     @mapfile = options[:mapfile] || 'renders/mapfile.json'
     @iterations = iterations
+    if resolutions.nil?
+      raise 'Invalid resolutions array'
+    elsif resolutions.size == 2 && resolutions[0].class == Integer
+      resolutions = [resolutions]
+    end
     @resolutions = resolutions
   end
 
+  def timestamp
+    "[#{Time.now.strftime('%T.%L')}]".magenta
+  end
+
   def run(prefix = nil)
+    t0 = Time.now
+    puts "#{timestamp} " + "Running Batch Render... "
+
     @resolutions.each do |resolution|
       precisions.each do |precision|
-        puts "Creating grid".cyan + ", " + "precision".cyan + " = " + "#{precision}".red
+        puts "#{timestamp} " + "Creating grid..."
         t0 = Time.now
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
         grid.compute_mandelbrot @iterations
         Renderer.new(grid).render export_location: @export_location, prefix: prefix
 
         t1 = Time.now - t0
-        puts "Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
+        puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
       end
     end
+    t1 = Time.now - t0
+    puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
+    { resolutions: resolutions, precisions: precisions, benchmark: t1 }
   end
 end
+
+class ZoomedOutFactory < MandelbrotFactory
+  X_COORDINATE = 0
+  Y_COORDINATE = 0
+  ITERATIONS = 1000
+  START_PRECISION = 4
+  END_PRECISION = 14
+  def initialize(resolutions, options = {})
+    super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
+  end
+end
+
 
 class CuspFactory < MandelbrotFactory
   X_COORDINATE = 0.2549870375144766

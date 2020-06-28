@@ -53,7 +53,7 @@ class Renderer
 
   def render(options = {})
     t0 = Time.now
-    print "Applying transformations..."
+    print timestamp + " Applying transformations..."
     x_min = grid.x_min
     y_max = grid.y_max
     step = grid.step
@@ -92,14 +92,20 @@ class Renderer
     # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || Time.now.to_f
-    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision}.png"
-    print "Exporting" + " to " + "#{filename}".green
+    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}.png"
+    print timestamp + " Exporting" + " to " + "#{filename}".green
     if png.save(filename, :interlace => true)
       t3 = Time.now
       benchmark = t3-t2
-      puts " (" + "#{benchmark.round(3)}".cyan + " seconds)"
+      puts " (" + "#{benchmark.round(3)}".cyan + " seconds)\n"
     else
       'Export error.'.red
     end
+  end
+
+  private
+
+  def timestamp
+    "[#{Time.now.strftime('%T.%L')}]".magenta
   end
 end

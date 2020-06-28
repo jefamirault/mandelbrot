@@ -5,18 +5,31 @@ require 'colorize'
 
 
 class Grid
-  attr_accessor :center_x, :center_y, :precision, :step, :width, :height, :map, :mapfile
+  attr_accessor :center_x, :center_y, :precision_index, :precision, :step, :width, :height, :map, :mapfile
 
   DEFAULT_MAPFILE = 'mapfile.json'
 
-  def initialize(x = 0, y = 0, precision = 2, width = 16, height = 9, options = {})
-    if precision % 1 != 0
-      raise "Invalid arguments. Precision (#{precision}) must be an integer."
+  def initialize(x = 0, y = 0, precision_index = 2, width = 16, height = 9, options = {})
+    if precision_index % 1 != 0
+      raise "Invalid arguments. Precision Index (#{precision}) must be an integer."
     end
-    @precision = precision
-    # BigDecimal.limit(40)
-    # @step = (BigDecimal(2) ** -precision) * 1.0
-    @step = 2 ** -precision
+    @precision_index = precision_index
+    @precision = (precision_index / 3).floor
+
+    @step = 10 ** (@precision * -1)
+
+    remainder = precision_index % 3
+    precise_step = BigDecimal(@step.to_f.to_s)
+    if remainder != 0
+      if remainder == 1
+        precise_step *= 0.5
+        @precision + 0.3
+      elsif remainder == 2
+        precise_step *= 0.2
+      end
+      @precision += remainder * 0.25
+    end
+    @step = precise_step.to_f
 
     @center_x = nearest_step(x, @step)
     @center_y = nearest_step(y, @step)
@@ -24,6 +37,10 @@ class Grid
     @width = width
     @height = height
     @mapfile = options[:mapfile] || DEFAULT_MAPFILE
+  end
+
+  def precise_step
+    BigDecimal(@step.to_s)
   end
 
   def include?(x, y)
@@ -34,50 +51,50 @@ class Grid
   end
 
   def x_min
+    center = BigDecimal(@center_x.to_s)
     if width.even?
-      @center_x - (width / 2) * @step
+      center - (width / 2) * precise_step
     else
-      @center_x - (width / 2).floor * @step
-    end
+      center - (width / 2).floor * precise_step
+    end.to_f
   end
-
   def x_max
+    center = BigDecimal(@center_x.to_s)
     if width.even?
-      @center_x + (width / 2 - 1) * @step
+      center + (width / 2 - 1) * precise_step
     else
-      @center_x + (width / 2).floor * @step
-    end
+      center + (width / 2).floor * precise_step
+    end.to_f
   end
-
   def y_min
+    center = BigDecimal(@center_y.to_s)
     if height.even?
-      @center_y - height / 2 * @step
+      center - height / 2 * precise_step
     else
-      @center_y - (height / 2).floor * @step
-    end
+      (center - (height / 2).floor * precise_step)
+    end.to_f
   end
-
   def y_max
+    center = BigDecimal(@center_y.to_s)
     if height.even?
-      @center_y + (height / 2 - 1) * @step
+      center + (height / 2 - 1) * precise_step
     else
-      @center_y + (height / 2).floor * @step
-    end
+      center + (height / 2).floor * precise_step
+    end.to_f
   end
 
   def points
     hash = {}
-    # x = BigDecimal(x_min.to_s)
-    x = x_min
+    precise_x = BigDecimal(x_min.to_s)
+    precise_y = BigDecimal(y_max.to_s)
+
+    x = precise_x
     while x <= x_max
-      # y = BigDecimal(y_max.to_s)
-      y = y_max
+      y = precise_y
       while y >= y_min
-        hash[[x, y]] = true
-        # y -= BigDecimal(@step.to_f.to_s)
+        hash[[x.to_f, y.to_f]] = true
         y -= @step
       end
-      # x += BigDecimal(@step.to_f.to_s)
       x += @step
     end
     hash
@@ -92,7 +109,8 @@ class Grid
   end
 
   def nearest_step(number, step)
-    ((number / step).round * step) * 1.0
+    precise_step = BigDecimal(step.to_f.to_s)
+    ((number / step).round * precise_step).to_f
   end
 
   def to_yaml(options = nil)
@@ -108,7 +126,7 @@ class Grid
   def load(mapfile = DEFAULT_MAPFILE)
     t0 = Time.now
     @map = if File.file?(mapfile)
-      print "Loading mapfile: " + "#{mapfile}".green
+      print "#{timestamp}" + " Loading mapfile: " + "#{mapfile}".green
       JSON.parse(File.open(mapfile).read).to_h || {}
     else
       print "Creating mapfile: " + "#{mapfile}".cyan + "..."
@@ -120,22 +138,22 @@ class Grid
   end
 
   def write(mapfile, options = {})
-    puts 'Updating mapfile...'
+    print timestamp + "Updating mapfile: " + "#{@mapfile}".green
     t0 = Time.now
     if options[:overwrite]
       File.write(mapfile, @map.to_a)
     end
     t1 = Time.now - t0
-    puts "Saved to " + "#{@mapfile}".green + " (" + "#{t1}".cyan + " seconds)"
+    puts " (" + "#{t1}".cyan + " seconds)"
   end
 
   def compute_mandelbrot(iterations = 20)
-    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Step".cyan + ": " + "#{step}".red + ", " + "Precision".cyan + ": " + "#{@precision}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
+    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Step".cyan + ": " + "#{step}".red + ", " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
     load(@mapfile) if @map.nil?
 
-    print "Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
+    print timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now
 
     reused = 0
@@ -160,5 +178,12 @@ class Grid
     if new_points > 0
       write(@mapfile, overwrite: true)
     end
+    { reused: reused, new_points: new_points, benchmark: t1}
+  end
+
+  private
+
+  def timestamp
+    "[#{Time.now.strftime('%T.%L')}]".magenta
   end
 end
