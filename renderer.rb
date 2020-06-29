@@ -3,7 +3,7 @@ require_relative 'mandelbrot'
 require 'oily_png'
 
 class Renderer
-  attr_accessor :bitmap, :grid, :colors
+  attr_accessor :bitmap, :grid, :colors, :iterations
 
   RESOLUTIONS = [
       [    1, 1    ], # 0
@@ -60,10 +60,10 @@ class Renderer
     y_max = grid.y_max
     step = grid.step
     color_speed = options[:color_speed] || DEFAULT_COLOR_SPEED
-    transform = grid.map.map do |point, data|
+    transform = grid.points.map do |point, data|
       x = (point[0] - x_min) / step
       y = (point[1]*-1 + y_max) / step
-      color = if data[0] == data[1]
+      color = if data[0] >= @iterations
                 ChunkyPNG::Color.rgba(0,0,0,255) # black
               else
                 @colors[(data[0] + 0) * color_speed % @colors.size]

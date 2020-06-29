@@ -1,4 +1,5 @@
 require_relative 'mandelbrot'
+require_relative 'mandelbrot_map'
 require 'json'
 require 'bigdecimal'
 require 'colorize'
@@ -93,7 +94,8 @@ class Grid
     while x <= x_max
       y = precise_y
       while y >= y_min
-        hash[[x.to_f, y.to_f]] = true
+        point = [x.to_f, y.to_f]
+        hash[point] = @map.get point
         y -= @step
       end
       x += @step
@@ -152,32 +154,43 @@ class Grid
     puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
-    # load(@mapfile) if @map.nil?
-
-    @map ||= {}
+    raise 'Missing map data' if @map.nil?
 
     print timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now
 
     reused = 0
     new_points = 0
+    recompute = 0
     points.each do |point, data|
-      if @map[point].nil? # || @map[point] === true
-        # puts "Point #{point} has not been tested for membership in the Mandelbrot Set. Computing..."
+      if data.nil?
         number = Complex(*point)
         check = Mandelbrot.new(number, iterations)
         iterates_under_two = check.iterates_under_two
-        @map[point] = [iterates_under_two, iterations]
+        @map.set(point, iterates_under_two, iterations)
         new_points += 1
       else
-        # puts "Point already computed. Iterates under two: #{@map[point][0]}, iterations checked: #{@map[point][1]}"
-        reused += 1
+        if data[0] == data[1] # iterates_under_two == explored_iterations
+          if data[1] < iterations
+            # recompute this point at higher iterations
+            number = Complex(*point)
+            check = Mandelbrot.new(number, iterations)
+            iterates_under_two = check.iterates_under_two
+            @map.set(point, iterates_under_two, iterations)
+            recompute += 1
+            # puts "recompute: #{point}, old: #{data}, new: #{iterates_under_two}, #{iterations}"
+          else # maximum iterate is under 2
+            reused += 1
+          end
+        else # iterates already exceed 2
+          reused += 1
+        end
       end
     end
 
     t1 = Time.now - t0
     puts " (" + "#{t1.round(3)}".cyan + " seconds)"
-    puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan
+    puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan + " #{recompute} points recomputed at higher iteration.".magenta
 
     { reused: reused, new_points: new_points, benchmark: t1}
   end

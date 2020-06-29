@@ -22,15 +22,9 @@ class MandelbrotFactory
     "[#{Time.now.strftime('%T.%L')}]".magenta
   end
 
-  # TODO use options hash
-  def run(prefix = nil)
+  def run(options = {})
     t0 = Time.now
     puts "#{timestamp} " + "Running Batch Render... "
-
-
-    # dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: @mapfile)
-    # dummy_grid.load
-    # @map = dummy_grid.map
 
     @resolutions.each do |resolution|
       precisions.each do |precision|
@@ -41,34 +35,25 @@ class MandelbrotFactory
         grid.map = @map
 
         grid.compute_mandelbrot @iterations
-        Renderer.new(grid).render export_location: @export_location, prefix: prefix
+        @map = grid.map
+        renderer = Renderer.new(grid)
+        renderer.iterations = @iterations
+        renderer.render export_location: @export_location, prefix: options[:prefix]
 
         t1 = Time.now - t0
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
       end
     end
 
-    # unless options[:more_batches]
-    #   dummy_grid.write @mapfile, overwrite: true
-    # end
-
-
     t1 = Time.now - t0
     puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
     { resolutions: resolutions, precisions: precisions, benchmark: t1 }
   end
 
-  def load_mapfile
-    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: mapfile)
-    dummy_grid.load
-    @map = dummy_grid.map
-  end
+end
 
-  def write_mapfile(mapfile = @mapfile)
-    dummy_grid = Grid.new(*@center, 6, 64, 64, mapfile: mapfile)
-    dummy_grid.map = @map
-    dummy_grid.write
-  end
+class IterationTour < MandelbrotFactory
+
 end
 
 class ZoomZeroFactory < MandelbrotFactory

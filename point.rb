@@ -1,9 +1,10 @@
 class Point
-  attr_accessor :location, :iterates_under_two, :iterations_checked
+  attr_accessor :real, :imaginary, :iterates_under_two, :iterations_explored
 
-  def initialize(location, iterates_under_two, iterations_checked)
-    @location = location # complex number
+  def initialize(real, imaginary, iterates_under_two, iterations_explored)
+    @real = real
+    @imaginary = imaginary
     @iterates_under_two = iterates_under_two
-    @iterations_checked = iterations_checked
+    @iterations_explored = iterations_explored
   end
 end
