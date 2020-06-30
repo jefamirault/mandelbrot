@@ -1,6 +1,6 @@
-require_relative 'test'
+require 'simple_test'
 
-class ComplexNumberTest < Test
+class ComplexNumberTest < SimpleTest
   def run
     t0 = Time.now
     puts "\nRunning #{self.class}.rb...".cyan

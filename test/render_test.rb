@@ -1,8 +1,8 @@
 require_relative '../mandelbrot_factory'
-require_relative 'test'
+require 'simple_test'
 require 'fileutils'
 
-class RenderTest < Test
+class RenderTest < SimpleTest
   def run(options = {})
 
     # ALL BATCHES TEST

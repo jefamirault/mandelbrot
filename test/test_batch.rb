@@ -1,4 +1,4 @@
-require_relative 'test'
+require 'simple_test'
 require_relative 'grid_test'
 require_relative 'complex_number_test'
 require_relative 'mandelbrot_test'
@@ -10,4 +10,4 @@ end
 
 tests = [GridTest, ComplexNumberTest, MandelbrotTest]
 
-Test.batch(tests)
+SimpleTest.batch(tests)

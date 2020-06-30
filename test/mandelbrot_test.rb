@@ -1,8 +1,8 @@
-require_relative 'test'
+require 'simple_test'
 require_relative '../mandelbrot'
 
 
-class MandelbrotTest < Test
+class MandelbrotTest < SimpleTest
   def run
     t0 = Time.now
     puts "\nRunning #{self.class}.rb...".cyan
