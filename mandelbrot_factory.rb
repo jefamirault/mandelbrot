@@ -42,6 +42,12 @@ class MandelbrotFactory
     @resolutions = [resolution]
   end
 
+  def center=(center)
+    if center.class != Array || center.size != 2
+      raise "Argument Error: Expected two coordinates #{center}"
+    end
+    @center = center
+  end
 
   def run(options = {})
     t0 = Time.now
@@ -53,13 +59,14 @@ class MandelbrotFactory
         t0 = Time.now
 
         grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
+
         grid.map = @map
 
         grid.compute_mandelbrot @iterations
         @map = grid.map
         renderer = Renderer.new(grid)
         renderer.iterations = @iterations
-        renderer.render export_location: @export_location, prefix: options[:prefix], scale: @scale
+        renderer.render export_location: @export_location, prefix: options[:prefix], scale: @scale, color_speed: options[:color_speed]
 
         t1 = Time.now - t0
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"

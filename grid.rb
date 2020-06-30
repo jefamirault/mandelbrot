@@ -85,6 +85,14 @@ class Grid
     end.to_f
   end
 
+  def top_left
+    [x_min, y_max]
+  end
+
+  def bottom_right
+    [x_max, y_min]
+  end
+
   def points
     hash = {}
     precise_x = BigDecimal(x_min.to_s)

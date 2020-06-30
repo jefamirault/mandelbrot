@@ -102,6 +102,14 @@ class Renderer
     filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
 
+    png.metadata['center'] = [grid.center_x, grid.center_y].to_s
+    png.metadata['precision'] = grid.precision_index.to_s
+    png.metadata['step'] = grid.step.to_s
+    png.metadata['scale'] = (options[:scale] || 1).to_s
+    png.metadata['top_left_corner'] = grid.top_left.to_s
+    png.metadata['bottom_right_corner'] = grid.bottom_right.to_s
+    png.metadata['color_speed'] = options[:color_speed].to_s
+
     if png.save(filename, :interlace => true)
       t3 = Time.now
       benchmark = t3-t2
