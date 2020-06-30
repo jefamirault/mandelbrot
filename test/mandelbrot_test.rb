@@ -43,8 +43,8 @@ class MandelbrotTest < Test
     @benchmark = t1 - t0
   end
 end
-
-
-test = MandelbrotTest.new
-test.run
-test.result
+#
+#
+# test = MandelbrotTest.new
+# test.run
+# test.result

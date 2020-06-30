@@ -20,18 +20,20 @@ class MandelbrotMap
   end
 
   def load(mapfile = @mapfile, options = {})
-    @map = if File.file?(mapfile)
-             print "#{timestamp}" + " Loading mapfile: " + "#{mapfile}".green
-             JSON.parse(File.open(mapfile).read).to_h
-           elsif options[:require_file]
-             raise "LoadError: File #{mapfile} not found"
-           else
-             puts "Creating mapfile: " + "#{mapfile}".cyan + "..."
-             File.open mapfile, 'w' do |f|
+    if File.file?(mapfile)
+     print "#{timestamp}" + " Loading mapfile: " + "#{mapfile}".green
+     t0 = Time.now
+     @map = JSON.parse(File.open(mapfile).read).to_h
+     t1 = Time.now - t0
+     puts "(" + t1.to_s.cyan + " seconds)"
 
-             end
-             {}
-           end
+     elsif options[:require_file]
+       raise "LoadError: File #{mapfile} not found"
+     else
+       puts "Creating mapfile: " + "#{mapfile}".cyan + "..."
+       File.open mapfile, 'w'
+       @map = {}
+     end
   end
 
   def write(options = {})

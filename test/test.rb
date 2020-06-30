@@ -55,4 +55,15 @@ class Test
     puts [total_result, pass_result, fail_result].join ', '
     puts
   end
+
+  def self.batch(tests)
+    tests.each do |test|
+      test.new.run
+    end
+  end
+
+  def purge_folder(path)
+    FileUtils.rm_f Dir.glob("#{path}/*")
+  end
 end
+

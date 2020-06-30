@@ -6,9 +6,9 @@ class Renderer
   attr_accessor :bitmap, :grid, :colors, :iterations
 
   RESOLUTIONS = [
-      [    1, 1    ], # 0
-      [    2, 2    ], # 1
-      [    4, 4    ], # 2
+      [    2, 2    ], # 0
+      [    4, 4    ], # 1
+      [    8, 8    ], # 2
       [   16, 9    ], # 3
       [   32, 18   ], # 4
       [   64, 36   ], # 5
@@ -90,12 +90,18 @@ class Renderer
       png[x, y] = pixel[2]
     end
 
+    if options[:scale] && options[:scale] != 1
+      puts "Scaling image by #{options[:scale]}"
+      png = scale(png, options[:scale])
+    end
+
     t2 = Time.now
     # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || ("%.7f" % Time.now.to_f)
     filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
+
     if png.save(filename, :interlace => true)
       t3 = Time.now
       benchmark = t3-t2
@@ -103,6 +109,21 @@ class Renderer
     else
       'Export error.'.red
     end
+  end
+
+  def scale(png, scalar)
+    width = png.width
+    height = png.height
+    new_width = width * scalar
+    new_height = height * scalar
+
+    scaled_up = ChunkyPNG::Image.new(new_width, new_height, ChunkyPNG::Color::WHITE)
+    width.times do |x|
+      height.times do |y|
+        scaled_up.rect(x*scalar, y*scalar, (x+1)*scalar-1, (y+1)*scalar-1, png[x,y], png[x,y])
+      end
+    end
+    scaled_up
   end
 
   private

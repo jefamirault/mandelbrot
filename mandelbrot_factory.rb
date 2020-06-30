@@ -2,7 +2,7 @@ require_relative 'grid'
 require_relative 'renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions, :map
+  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale
 
   def initialize(x, y, iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
@@ -15,30 +15,51 @@ class MandelbrotFactory
     elsif resolutions.size == 2 && resolutions[0].class == Integer
       resolutions = [resolutions]
     end
+
     @resolutions = resolutions
+    @scale = options[:scale]
   end
 
   def timestamp
     "[#{Time.now.strftime('%T.%L')}]".magenta
   end
 
+  def precisions=(one_or_more)
+    klass = one_or_more.class
+    @precisions = if klass == Integer
+      [one_or_more]
+    elsif klass == Array || klass == Range
+      one_or_more
+    else
+      raise "Invalid precision arguments. Expecting one or more precisions. Got: #{one_or_more}"
+    end
+  end
+
+  def resolution=(resolution)
+    if resolution.nil? || resolution.size != 2
+      raise 'Resolution Argument Error.'
+    end
+    @resolutions = [resolution]
+  end
+
+
   def run(options = {})
     t0 = Time.now
     puts "#{timestamp} " + "Running Batch Render... "
 
     @resolutions.each do |resolution|
-      precisions.each do |precision|
+      @precisions.each do |precision|
         puts "#{timestamp} " + "Creating grid..."
         t0 = Time.now
-        grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
 
+        grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
         grid.map = @map
 
         grid.compute_mandelbrot @iterations
         @map = grid.map
         renderer = Renderer.new(grid)
         renderer.iterations = @iterations
-        renderer.render export_location: @export_location, prefix: options[:prefix]
+        renderer.render export_location: @export_location, prefix: options[:prefix], scale: @scale
 
         t1 = Time.now - t0
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"

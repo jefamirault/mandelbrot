@@ -53,6 +53,6 @@ class ComplexNumberTest < Test
 
 end
 
-test = ComplexNumberTest.new
-test.run
-test.result
+# test = ComplexNumberTest.new
+# test.run
+# test.result
