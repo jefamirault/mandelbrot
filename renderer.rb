@@ -106,6 +106,7 @@ class Renderer
     png.metadata['precision'] = grid.precision_index.to_s
     png.metadata['step'] = grid.step.to_s
     png.metadata['scale'] = (options[:scale] || 1).to_s
+    png.metadata['iterations'] = @iterations.to_s
     png.metadata['top_left_corner'] = grid.top_left.to_s
     png.metadata['bottom_right_corner'] = grid.bottom_right.to_s
     png.metadata['color_speed'] = options[:color_speed].to_s

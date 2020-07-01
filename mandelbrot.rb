@@ -30,6 +30,15 @@ class Mandelbrot
   end
 
   def member?
-    iterates_under_two == iterations
+    iterates_under_two == @iterations
+  end
+
+  def verbose
+    puts "The number #{@number} has #{iterates_under_two} iterates with magnitude less than two out of #{@iterations} explored."
+    if member?
+      puts "#{@number} meets the criteria for set membership at #{@iterations} iterations."
+    else
+      puts "The size of the iterates of #{@number} trend to infinity. It is not a member of the Mandelbrot Set."
+    end
   end
 end

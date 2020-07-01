@@ -42,6 +42,13 @@ class MandelbrotFactory
     @resolutions = [resolution]
   end
 
+  def resolutions=(resolutions)
+    if resolutions.class == Array && resolutions[0] == Integer
+      raise "Invalid resolutions arguments. Expecting array of arrays."
+    end
+    super
+  end
+
   def center=(center)
     if center.class != Array || center.size != 2
       raise "Argument Error: Expected two coordinates #{center}"

@@ -11,20 +11,26 @@ def purge_folder(path)
 end
 
 
-folder = 'renders/test/cusp'
-# purge_folder folder
+folder = 'renders/cusp'
 
-resolutions = Renderer::RESOLUTIONS[13..16]
+resolutions = Renderer::RESOLUTIONS[12..12]
 cusp = CuspFactory.new resolutions, export_location: folder
 cusp.map = MandelbrotMap.new mapfile: "#{folder}/mapfile.json"
 cusp.map.load
-cusp.precisions = (30..33)
+cusp.precisions = (35..35)
 cusp.center = [0.2550505158, -0.00064763438]
-cusp.iterations = 8000
+cusp.iterations = 16000
 
-[0.125, 0.25, 0.5, 1].each do |color_speed|
+[0.5].each do |color_speed|
   cusp.run color_speed: color_speed
 end
 
 cusp.map.write overwrite: true
+
+cusp.resolutions = Renderer::RESOLUTIONS[18..18]
+cusp.precisions = (35..35)
+cusp.run color_speed: 1
+
+cusp.map.write overwrite: true
+
 

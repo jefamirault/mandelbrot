@@ -251,6 +251,12 @@ end
 
 test = RenderTest.new
 
-# test.run slow: true
-# test.run
-test.run fast: true
+options = {}
+
+if ARGV[0] == 'fast'
+  options[:fast] = true
+elsif ARGV[0] == 'slow'
+  options[:slow] = true
+end
+
+test.run options
