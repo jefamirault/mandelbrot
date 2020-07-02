@@ -46,7 +46,7 @@ class MandelbrotFactory
     if resolutions.class == Array && resolutions[0] == Integer
       raise "Invalid resolutions arguments. Expecting array of arrays."
     end
-    super
+    @resolutions = resolutions
   end
 
   def center=(center)

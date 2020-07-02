@@ -24,7 +24,8 @@ class Renderer
       [ 2560, 1440 ], # 15
       [ 3200, 1800 ], # 16
       [ 3840, 2160 ], # 17
-      [ 7680, 4320 ]  # 18
+      [ 5760, 3240 ], # 18
+      [ 7680, 4320 ]  # 19
   ]
 
   DEFAULT_COLOR_SPEED = 12
@@ -99,7 +100,7 @@ class Renderer
     # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || ("%.7f" % Time.now.to_f)
-    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}.png"
+    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}_z#{@iterations}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
 
     png.metadata['center'] = [grid.center_x, grid.center_y].to_s

@@ -60,7 +60,7 @@ class RenderTest < SimpleTest
       pinwheel_blade.map.write overwrite: true
     end
 
-    # Quick Render Batch Test
+    # Render Batch Test
 
     test_resolutions = if options[:fast]
                          Renderer::RESOLUTIONS[3]
