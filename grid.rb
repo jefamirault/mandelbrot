@@ -167,9 +167,18 @@ class Grid
     print timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now
 
+    points_left = number_of_points
     reused = 0
     new_points = 0
     recompute = 0
+
+
+    checkpoints = (0..99).map do |percent|
+      number_of_points * percent / 100
+    end
+
+    puts
+
     points.each do |point, data|
       if data.nil?
         number = Complex(*point)
@@ -186,7 +195,6 @@ class Grid
             iterates_under_two = check.iterates_under_two
             @map.set(point, iterates_under_two, iterations)
             recompute += 1
-            # puts "recompute: #{point}, old: #{data}, new: #{iterates_under_two}, #{iterations}"
           else # maximum iterate is under 2
             reused += 1
           end
@@ -194,7 +202,18 @@ class Grid
           reused += 1
         end
       end
+      points_left -= 1
+
+      # progress
+      if points_left < checkpoints.last
+        print '.'
+        checkpoints.pop
+      end
+
     end
+
+
+
 
     t1 = Time.now - t0
     puts " (" + "#{t1.round(3)}".cyan + " seconds)"
