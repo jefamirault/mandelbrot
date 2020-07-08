@@ -3,7 +3,7 @@ require_relative 'mandelbrot'
 require 'oily_png'
 
 class Renderer
-  attr_accessor :bitmap, :grid, :colors, :iterations
+  attr_accessor :bitmap, :grid, :colors, :max_iterations
 
   RESOLUTIONS = [
       [    2, 2    ], # 0
@@ -64,11 +64,14 @@ class Renderer
     transform = grid.points.map do |point, data|
       x = (point[0] - x_min) / step
       y = (point[1]*-1 + y_max) / step
-      color = if data[0] >= @iterations
+      color = if data[0] >= @max_iterations
                 ChunkyPNG::Color.rgba(0,0,0,255) # black
               else
-                @colors[(data[0] + 0) * color_speed % @colors.size]
+                color_offset = 0
+                color_index = (data[0] * color_speed + color_offset) % @colors.size
+                @colors[color_index]
               end
+      # print "#{data[0].round(3)}/#{@max_iterations}, "  # if data[0] > @max_iterations - 1
       [x, y, color]
     end
 
@@ -100,14 +103,14 @@ class Renderer
     # puts " (" + "#{t2 - t1}".cyan + " seconds)" # verbose
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || ("%.7f" % Time.now.to_f)
-    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}_z#{@iterations}.png"
+    filename ||= "#{export_location}/#{prefix}_#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}_z#{@max_iterations}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
 
     png.metadata['center'] = [grid.center_x, grid.center_y].to_s
     png.metadata['precision'] = grid.precision_index.to_s
     png.metadata['step'] = grid.step.to_s
     png.metadata['scale'] = (options[:scale] || 1).to_s
-    png.metadata['iterations'] = @iterations.to_s
+    png.metadata['max_iterations'] = @max_iterations.to_s
     png.metadata['top_left_corner'] = grid.top_left.to_s
     png.metadata['bottom_right_corner'] = grid.bottom_right.to_s
     png.metadata['color_speed'] = options[:color_speed].to_s

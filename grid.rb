@@ -1,6 +1,5 @@
 require_relative 'mandelbrot'
 require_relative 'mandelbrot_map'
-require 'json'
 require 'bigdecimal'
 require 'colorize'
 
@@ -8,11 +7,11 @@ require 'colorize'
 class Grid
   attr_accessor :center_x, :center_y, :precision_index, :precision, :step, :width, :height, :map, :mapfile
 
-  DEFAULT_MAPFILE = 'mapfile.json'
+  DEFAULT_MAPFILE = 'mapfile'
 
   def initialize(x = 0, y = 0, precision_index = 2, width = 16, height = 9, options = {})
     if precision_index % 1 != 0
-      raise "Invalid arguments. Precision Index (#{precision}) must be an integer."
+      raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
     end
     @precision_index = precision_index
     @precision = (precision_index / 3).floor
@@ -124,28 +123,10 @@ class Grid
     ((number / step).round * precise_step).to_f
   end
 
-  def to_yaml(options = nil)
-    @map.to_yaml options
-  end
-
   def to_a
     @map.map do |point, data|
       [point[0], point[1], data[0], data[1]]
     end
-  end
-
-  def load(mapfile = @mapfile)
-    t0 = Time.now
-    @map = if File.file?(mapfile)
-      print "#{timestamp}" + " Loading mapfile: " + "#{mapfile}".green
-      JSON.parse(File.open(mapfile).read).to_h || {}
-    else
-      print "Creating mapfile: " + "#{mapfile}".cyan + "..."
-      File.open mapfile, 'w'
-      {} end
-    t1 = Time.now - t0
-    puts " (" + "#{t1.round(3)}".cyan + " seconds)"
-    mapfile
   end
 
   def write(mapfile = @mapfile, options = {})
@@ -164,7 +145,7 @@ class Grid
 
     raise 'Missing map data' if @map.nil?
 
-    print timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
+    puts timestamp + " Analyzing " + "#{number_of_points}".cyan + " points at " + "#{iterations}".red + " iterations..."
     t0 = Time.now
 
     points_left = number_of_points
@@ -176,14 +157,13 @@ class Grid
     checkpoints = (0..99).map do |percent|
       number_of_points * percent / 100
     end
-
-    puts
-
+    puts "0%      10%       20%       30%       40%       50%       60%       70%       80%       90%      100%"
+    print '['
     points.each do |point, data|
       if data.nil?
         number = Complex(*point)
         check = Mandelbrot.new(number, iterations)
-        iterates_under_two = check.iterates_under_two
+        iterates_under_two = check.bounded_iterates
         @map.set(point, iterates_under_two, iterations)
         new_points += 1
       else
@@ -192,7 +172,7 @@ class Grid
             # recompute this point at higher iterations
             number = Complex(*point)
             check = Mandelbrot.new(number, iterations)
-            iterates_under_two = check.iterates_under_two
+            iterates_under_two = check.bounded_iterates
             @map.set(point, iterates_under_two, iterations)
             recompute += 1
           else # maximum iterate is under 2
@@ -205,19 +185,23 @@ class Grid
       points_left -= 1
 
       # progress
-      if points_left < checkpoints.last
+      if checkpoints.size > 0 && points_left < checkpoints.last
         print '.'
         checkpoints.pop
       end
 
     end
+    puts ']'
 
 
 
+    percent_reused = (reused.to_f / number_of_points * 100).round 2
+    percent_new = (new_points.to_f / number_of_points * 100).round 2
+    percent_recompute = (recompute.to_f / number_of_points * 100).round 2
 
     t1 = Time.now - t0
-    puts " (" + "#{t1.round(3)}".cyan + " seconds)"
-    puts "#{reused} points reused.".green + " #{new_points} new points computed.".cyan + " #{recompute} points recomputed at higher iteration.".magenta
+    puts timestamp + " #{number_of_points}".red + " points analyzed in " + "#{t1.round(3)}".cyan + " seconds"
+    puts "#{reused} points reused (#{percent_reused}%).".green + " #{new_points} new points computed (#{percent_new}%).".cyan + " #{recompute} points recomputed (#{percent_recompute}%).".magenta
 
     { reused: reused, new_points: new_points, benchmark: t1}
   end

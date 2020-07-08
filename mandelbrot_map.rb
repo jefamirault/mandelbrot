@@ -1,5 +1,3 @@
-require 'json'
-
 class MandelbrotMap
 
   attr_accessor :map, :mapfile
@@ -29,7 +27,7 @@ class MandelbrotMap
         @map = Marshal.load(f)
       end
       t1 = Time.now - t0
-      puts " (" + t1.to_s.cyan + " seconds)"
+      puts " (" + t1.round(3).to_s.cyan + " seconds)"
 
     elsif options[:require_file]
       raise "LoadError: File #{mapfile} not found"
@@ -45,7 +43,7 @@ class MandelbrotMap
       @mapfile = options[:mapfile]
     end
 
-    print timestamp + " Writing to compressed mapfile: " + "#{@mapfile}".green
+    print timestamp + " Writing to mapfile: " + "#{@mapfile}".green
     t0 = Time.now
     if options[:overwrite]
       File.open(@mapfile, 'w+') do |f|
@@ -59,7 +57,7 @@ class MandelbrotMap
       end
     end
     t1 = Time.now - t0
-    puts " (" + "#{t1}".cyan + " seconds)"
+    puts " (" + "#{t1.round(3)}".cyan + " seconds)"
   end
 
 

@@ -1,24 +1,30 @@
 require 'bigdecimal'
 class Mandelbrot
-  attr_accessor :number, :iterations
+  attr_accessor :number, :max_iterations, :escape_radius
 
   def initialize(number, iterations = 20)
     @number = number
-    @iterations = iterations
+    @max_iterations = iterations
+    @escape_radius = 3.1
   end
 
-  def iterates_under_two
+  def bounded_iterates(precision = 3)
     z = @number
-    if z.magnitude >= 2
-      return 0
-    end
-    @iterations.times do |i|
+    iteration = 0
+    while z.magnitude < @escape_radius && iteration <= @max_iterations
       z = z**2 + @number
-      if z.magnitude >= 2
-        return i + 1
-      end
+      iteration += 1
     end
-    @iterations
+    if z.magnitude < @escape_radius
+      @max_iterations
+    else
+      3.times do
+        z = z**2 + @number
+        iteration += 1
+      end
+      mu = iteration - Math.log(Math.log(z.magnitude)) / Math.log(2)
+      mu.round(precision)
+    end
   end
 
   def iteration_z(z)
@@ -30,13 +36,13 @@ class Mandelbrot
   end
 
   def member?
-    iterates_under_two == @iterations
+    iterates_under_two == @max_iterations
   end
 
   def verbose
-    puts "The number #{@number} has #{iterates_under_two} iterates with magnitude less than two out of #{@iterations} explored."
+    puts "The number #{@number} has #{iterates_under_two} iterates with magnitude less than two out of #{@max_iterations} explored."
     if member?
-      puts "#{@number} meets the criteria for set membership at #{@iterations} iterations."
+      puts "#{@number} meets the criteria for set membership at #{@max_iterations} iterations."
     else
       puts "The size of the iterates of #{@number} trend to infinity. It is not a member of the Mandelbrot Set."
     end

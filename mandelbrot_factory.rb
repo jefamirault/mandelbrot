@@ -2,14 +2,15 @@ require_relative 'grid'
 require_relative 'renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale
+  attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale
 
-  def initialize(x, y, iterations, start_precision, end_precision, resolutions, options = {})
+  def initialize(x, y, max_iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
     @precisions = (start_precision..end_precision)
     @export_location = options[:export_location] || 'renders'
-    @mapfile = options[:mapfile] || 'renders/mapfile.json'
-    @iterations = iterations
+    @mapfile = options[:mapfile] || 'renders/mapfile'
+    @max_iterations = max_iterations
+
     if resolutions.nil?
       raise 'Invalid resolutions array'
     elsif resolutions.size == 2 && resolutions[0].class == Integer
@@ -69,32 +70,28 @@ class MandelbrotFactory
 
         grid.map = @map
 
-        grid.compute_mandelbrot @iterations
+        grid.compute_mandelbrot @max_iterations
         @map = grid.map
         renderer = Renderer.new(grid)
-        renderer.iterations = @iterations
+        renderer.max_iterations = @max_iterations
         renderer.render export_location: @export_location, prefix: options[:prefix], scale: @scale, color_speed: options[:color_speed]
 
         t1 = Time.now - t0
-        puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
+        puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds."
       end
     end
 
     t1 = Time.now - t0
-    puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds.\n\n"
+    puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds."
     { resolutions: resolutions, precisions: precisions, benchmark: t1 }
   end
-
-end
-
-class IterationTour < MandelbrotFactory
 
 end
 
 class ZoomZeroFactory < MandelbrotFactory
   X_COORDINATE = -0.75
   Y_COORDINATE = 0
-  ITERATIONS = 1000
+  ITERATIONS = 2000
   START_PRECISION = 6
   END_PRECISION = 14
   def initialize(resolutions, options = {})
@@ -118,8 +115,8 @@ class SeahorseFactory < MandelbrotFactory
   X_COORDINATE = -0.7463
   Y_COORDINATE = 0.1102
   ITERATIONS = 1000
-  START_PRECISION = 6
-  END_PRECISION = 17
+  START_PRECISION = 8
+  END_PRECISION = 19
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
@@ -129,7 +126,7 @@ class FlowerFactory < MandelbrotFactory
   X_COORDINATE = -0.4170662
   Y_COORDINATE = 0.60295913
   ITERATIONS = 1000
-  START_PRECISION = 6
+  START_PRECISION = 8
   END_PRECISION = 24
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
@@ -152,18 +149,20 @@ class LightningFactory < MandelbrotFactory
   Y_COORDINATE = 0.073481649996795
   ITERATIONS = 2000
   START_PRECISION = 6
-  END_PRECISION = 56
+  END_PRECISION = 50
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end
 end
 
-class PinwheelBladeFactory < MandelbrotFactory
+class PinwheelFactory < MandelbrotFactory
   X_COORDINATE = 0.281717921930775
   Y_COORDINATE = 0.5771052841488505
   ITERATIONS = 4000
-  START_PRECISION = 6
-  END_PRECISION = 53
+  # START_PRECISION = 6
+  START_PRECISION = 21
+  # END_PRECISION = 20
+  END_PRECISION = 50
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
   end

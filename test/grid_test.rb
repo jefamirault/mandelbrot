@@ -31,7 +31,7 @@ class GridTest < SimpleTest
     end
 
     test_case 'Computing identical grids using the same map' do
-      mapfile = 'renders/test/mapfile.json'
+      mapfile = 'renders/test/mapfile'
       width, height = 16, 9
       precision = 7
       iterations = 10
