@@ -1,4 +1,10 @@
 @echo off
-ruby test/grid_test.rb
-ruby test/complex_number_test.rb
-ruby test/mandelbrot_test.rb
+
+SET arg="%~1"
+if NOT %arg%=="" (
+    if %arg%=="render" (
+        bundle exec ruby test/render_test.rb fast
+    )
+) else (
+    bundle exec ruby test/test_batch.rb
+)

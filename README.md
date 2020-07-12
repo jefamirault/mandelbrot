@@ -1,6 +1,6 @@
 # Mandelbrot
 
-Visualize the Mandelbrot Set with a set of computing, mapping, and rendering tools.
+Visualize the Mandelbrot Set with a series of computing, mapping, and rendering tools.
 
 ## Getting Started
 
@@ -22,36 +22,25 @@ Receiving objects: 100% (183/183), 235.07 KiB | 3.09 MiB/s, done.
 Resolving deltas: 100% (116/116), done.
 ```
 
-### Tests
-
-Use `cd mandelbrot` to navigate to the project directory.
-Run tests:
+### Install Gems
+Run `bundle` to install gems from Gemfile
 ```
- ruby test/test_batch.rb
+Using bundler 1.17.2
+Using chunky_png 1.3.11
+Using colorize 0.8.1
+Using oily_png 1.2.1
+Using simple_test 0.1.0 from https://github.com/jefamirault/simple_test.git (at master@524f6e0)
+Bundle complete! 3 Gemfile dependencies, 5 gems now installed.
+Use `bundle info [gemname]` to see where a bundled gem is installed.
 ```
 
-and then:  
+### Dependencies
 
-```
-ruby test/render_test.rb
-```
-Look in the folder `renders/test` and visually inspect output.
-
-## Platform & Dependencies
-
-### Operating System
-Developed on Windows 10. Batch rendering done on Ubuntu 18.04 instances in VirtualBox.
-
-### Gems
-
-* Simple Test - Test Framework
+* [Simple Test](https://github.com/jefamirault/simple_test) - Simple Test Framework
 * [colorize](https://github.com/fazibear/colorize) - Colorful console output in Windows
 * [ChunkyPNG/OilyPNG](https://github.com/wvanbergen/chunky_png) - Output .png images
 
 ## Usage
-
-
-## Mandelbrot.rb
 
 Initialize Mandelbrot object with a complex number and the number of iterations to compute.
 
@@ -67,26 +56,35 @@ puts mandelbrot.verbose
 #  0+0i meets the criteria for set membership at 20 iterations.
 ```
 
-### Testing
+## Testing
 
-#### Unit Tests:
-Run all unit tests with:
-
-`ruby test/test_batch.rb`
-
-Or run individually:
-
-```ruby
-ruby test/complex_number_test.rb
-ruby test/mandelbrot_test.rb
-ruby test/grid_test.rb
+### Windows
+Unit Tests:
+```
+./test
 ```
 
 Render Tests:
 
-`ruby test/render_test.rb`
+```
+./test render
+```
 
-Rendering is a time-consuming process. Use options = {fast: true} for quicker tests, or options = {slow: true} for more in-depth tests.
+### Linux & Mac
+
+Unit Tests:
+
+```ruby
+bundle exec ruby test/test_batch.rb
+```
+
+Render Tests:
+
+```
+bundle exec ruby test/render_test.rb
+```
+
+Rendering is a time-consuming process. Use arguments 'fast' for quicker tests, or 'slow' for more in-depth tests.
 
 ```ruby
 ruby test/render_test.rb fast
