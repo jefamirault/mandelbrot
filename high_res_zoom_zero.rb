@@ -74,19 +74,21 @@ end
 
 
 composite_center = [-0.75, 0]
-iterations = 2000
+iterations = 4000
 scale = 1
-grid_size = 8
-precision = 12
+grid_size = 16
+precision = 13
+# need to use 0.5*step from p=12
 # width, height = 6500, 5700
 width, height = 3250, 2850
-step = 0.0001
+# step = 0.0001
+step = 0.00005
 x_start = composite_center[0] - (grid_size - 1) * width / 2 * step
 y_start = composite_center[1] + (grid_size - 1) * height / 2 * step
 
 tile_centers = []
-(0..3).each do |y|
-  (0..7).each do |x|
+(0..7).each do |y|
+  (0..15).each do |x|
     tile_centers << [x_start + (x * width) * step, y_start - (y * height) * step]
   end
 end
@@ -101,7 +103,7 @@ end
   }
 end
 
-@folder = 'renders/high_res_composite'
+@folder = 'renders/high_resolution_composite'
 
 @mapfile_index = {
     0 => 0,
@@ -140,8 +142,12 @@ end
 
 def render_composite(params)
   params.each_with_index do |param, index|
+    if index < 110
+      next
+    end
+
     @zoom_zero = ZoomZeroFactory.new [[64, 60]], export_location: @folder
-    @zoom_zero.map = MandelbrotMap.new mapfile: "#{@folder}/composite_#{@mapfile_index[index]}"
+    @zoom_zero.map = MandelbrotMap.new mapfile: "#{@folder}/composite_#{index}"
     @zoom_zero.map.load
 
     @zoom_zero.max_iterations = param[:iterations]

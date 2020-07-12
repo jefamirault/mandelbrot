@@ -1,6 +1,7 @@
 require_relative 'grid'
 require_relative 'mandelbrot'
 require 'oily_png'
+require 'byebug'
 
 class Renderer
   attr_accessor :bitmap, :grid, :colors, :max_iterations
@@ -29,6 +30,7 @@ class Renderer
   ]
 
   DEFAULT_COLOR_SPEED = 12
+  # DEFAULT_COLOR_SPEED = 5
 
   def initialize(grid)
     @grid = grid
@@ -61,6 +63,7 @@ class Renderer
     y_max = grid.y_max
     step = grid.step
     color_speed = options[:color_speed] || DEFAULT_COLOR_SPEED
+    color_speed *= 1.0
     transform = grid.points.map do |point, data|
       x = (point[0] - x_min) / step
       y = (point[1]*-1 + y_max) / step
@@ -68,7 +71,7 @@ class Renderer
                 ChunkyPNG::Color.rgba(0,0,0,255) # black
               else
                 color_offset = 0
-                color_index = (data[0] * color_speed + color_offset) % @colors.size
+                color_index = (data[0] * color_speed  + color_offset).round % @colors.size
                 @colors[color_index]
               end
       # print "#{data[0].round(3)}/#{@max_iterations}, "  # if data[0] > @max_iterations - 1

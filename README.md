@@ -1,4 +1,4 @@
-# README
+# Mandelbrot
 
 Visualize the Mandelbrot Set with a set of computing, mapping, and rendering tools.
 
@@ -35,7 +35,7 @@ and then:
 ```
 ruby test/render_test.rb
 ```
-4. Look in the folder `renders/test` and visually inspect output.
+Look in the folder `renders/test` and visually inspect output.
 
 ## Platform & Dependencies
 
@@ -69,7 +69,8 @@ puts mandelbrot.verbose
 
 ### Testing
 
-Unit Tests:
+#### Unit Tests:
+Run all unit tests with:
 
 `ruby test/test_batch.rb`
 

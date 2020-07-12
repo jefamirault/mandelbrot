@@ -2,13 +2,23 @@ require_relative 'grid'
 require_relative 'renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale
+  attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale, :override_step
 
   def initialize(x, y, max_iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
     @precisions = (start_precision..end_precision)
-    @export_location = options[:export_location] || 'renders'
-    @mapfile = options[:mapfile] || 'renders/mapfile'
+
+    if options[:directory]
+      @export_location = options[:directory]
+      @mapfile = @export_location + '/mapfile'
+      @map = MandelbrotMap.new mapfile: @mapfile
+      @map.load
+    else
+      @export_location = options[:export_location] || 'renders'
+      @mapfile = options[:mapfile] || 'renders/mapfile'
+    end
+
+
     @max_iterations = max_iterations
 
     if resolutions.nil?
@@ -19,6 +29,7 @@ class MandelbrotFactory
 
     @resolutions = resolutions
     @scale = options[:scale]
+    @override_step = options[:override_step]
   end
 
   def timestamp
@@ -66,7 +77,7 @@ class MandelbrotFactory
         puts "#{timestamp} " + "Creating grid..."
         t0 = Time.now
 
-        grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile)
+        grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile, override_step: @override_step)
 
         grid.map = @map
 
@@ -133,17 +144,6 @@ class FlowerFactory < MandelbrotFactory
   end
 end
 
-class SeahorseTailFactory < MandelbrotFactory
-  X_COORDINATE = -0.7453
-  Y_COORDINATE = 0.1127
-  ITERATIONS = 1000
-  START_PRECISION = 6
-  END_PRECISION = 17
-  def initialize(resolutions, options = {})
-    super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)
-  end
-end
-
 class LightningFactory < MandelbrotFactory
   X_COORDINATE = -1.315180982097868
   Y_COORDINATE = 0.073481649996795
@@ -159,9 +159,7 @@ class PinwheelFactory < MandelbrotFactory
   X_COORDINATE = 0.281717921930775
   Y_COORDINATE = 0.5771052841488505
   ITERATIONS = 4000
-  # START_PRECISION = 6
-  START_PRECISION = 21
-  # END_PRECISION = 20
+  START_PRECISION = 6
   END_PRECISION = 50
   def initialize(resolutions, options = {})
     super(X_COORDINATE, Y_COORDINATE, ITERATIONS, START_PRECISION, END_PRECISION, resolutions, options)

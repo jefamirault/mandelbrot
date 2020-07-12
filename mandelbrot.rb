@@ -36,7 +36,7 @@ class Mandelbrot
   end
 
   def member?
-    iterates_under_two == @max_iterations
+    bounded_iterates == @max_iterations
   end
 
   def verbose

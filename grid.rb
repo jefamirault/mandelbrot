@@ -13,23 +13,32 @@ class Grid
     if precision_index % 1 != 0
       raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
     end
-    @precision_index = precision_index
-    @precision = (precision_index / 3).floor
 
-    @step = 10 ** (@precision * -1)
 
-    remainder = precision_index % 3
-    precise_step = BigDecimal(@step.to_f.to_s)
-    if remainder != 0
-      if remainder == 1
-        precise_step *= 0.5
-        @precision + 0.3
-      elsif remainder == 2
-        precise_step *= 0.2
+    #
+    if options[:step].nil?
+      @precision_index = precision_index
+      @precision = (precision_index / 3).floor
+
+      @step = 10 ** (@precision * -1)
+
+      remainder = precision_index % 3
+      precise_step = BigDecimal(@step.to_f.to_s)
+      if remainder != 0
+        if remainder == 1
+          precise_step *= 0.5
+          @precision + 0.3
+        elsif remainder == 2
+          precise_step *= 0.2
+        end
+        @precision += remainder * 0.25
       end
-      @precision += remainder * 0.25
+      @step = precise_step.to_f
+    else
+      @step = options[:override_step]
     end
-    @step = precise_step.to_f
+    #
+
 
     @center_x = nearest_step(x, @step)
     @center_y = nearest_step(y, @step)
@@ -140,7 +149,7 @@ class Grid
   end
 
   def compute_mandelbrot(iterations = 20)
-    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision Index".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
+    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
     raise 'Missing map data' if @map.nil?

@@ -16,7 +16,7 @@ class MandelbrotTest < SimpleTest
       end
 
       test '0 should have 20 iterates under 2 after 20 iterations' do
-        assert_equal check.iterates_under_two, 20
+        assert_equal check.bounded_iterates, 20
       end
     end
 
@@ -28,7 +28,7 @@ class MandelbrotTest < SimpleTest
         assert_equal check.member?, false
       end
       test '1 should have 1 iterate under 2' do
-        assert_equal check.iterates_under_two, 1
+        assert_equal check.bounded_iterates.floor, 1
       end
     end
 
