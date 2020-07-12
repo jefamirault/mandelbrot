@@ -142,9 +142,15 @@ end
 
 def render_composite(params)
   params.each_with_index do |param, index|
-    if index < 110
+
+    # already complete
+    if index < 117
       next
     end
+
+    # all iterates stay bounded
+    next if index == 118
+    next if index >= 121 && index < 126
 
     @zoom_zero = ZoomZeroFactory.new [[64, 60]], export_location: @folder
     @zoom_zero.map = MandelbrotMap.new mapfile: "#{@folder}/composite_#{index}"

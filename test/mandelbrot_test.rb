@@ -1,5 +1,5 @@
 require 'simple_test'
-require_relative '../mandelbrot'
+require_relative '../lib/mandelbrot'
 
 
 class MandelbrotTest < SimpleTest

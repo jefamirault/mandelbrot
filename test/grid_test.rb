@@ -1,5 +1,5 @@
 require 'simple_test'
-require_relative '../grid'
+require_relative '../lib/grid'
 
 class GridTest < SimpleTest
   def run

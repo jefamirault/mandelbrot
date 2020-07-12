@@ -1,5 +1,5 @@
-require_relative 'grid'
-require_relative 'renderer'
+require_relative '../grid'
+require_relative '../renderer'
 
 class MandelbrotFactory
   attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale, :override_step

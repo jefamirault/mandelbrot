@@ -1,4 +1,4 @@
-require_relative '../mandelbrot_factory'
+require_relative '../lib/factory/mandelbrot_factory'
 require 'simple_test'
 require 'fileutils'
 
