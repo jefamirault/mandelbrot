@@ -1,3 +1,6 @@
+require 'fileutils'
+require 'pathname'
+
 class MandelbrotMap
 
   attr_accessor :map, :mapfile
@@ -33,6 +36,8 @@ class MandelbrotMap
       raise "LoadError: File #{mapfile} not found"
     else
       puts "Creating mapfile: " + "#{mapfile}".cyan + "..."
+      directory = Pathname(mapfile).dirname.to_s
+      FileUtils.mkdir_p directory
       File.open mapfile, 'w'
       @map = {}
     end

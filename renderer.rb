@@ -1,6 +1,7 @@
 require_relative 'grid'
 require_relative 'mandelbrot'
-require 'oily_png'
+# require 'oily_png'
+require 'chunky_png'
 
 class Renderer
   attr_accessor :bitmap, :grid, :colors, :max_iterations
