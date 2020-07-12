@@ -74,23 +74,12 @@ Render Tests:
 
 Unit Tests:
 
-```ruby
-bundle exec ruby test/test_batch.rb
+```
+./test.sh
 ```
 
 Render Tests:
 
 ```
-bundle exec ruby test/render_test.rb
-```
-
-Rendering is a time-consuming process. Use arguments 'fast' for quicker tests, or 'slow' for more in-depth tests.
-
-```ruby
-ruby test/render_test.rb fast
-# fast tests
-ruby test/render_test.rb
-# regular tests
-ruby test/render_test.rb slow
-# more comprehensive, slower tests
+./test.sh render
 ```
