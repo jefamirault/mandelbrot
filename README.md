@@ -2,8 +2,11 @@
 
 Visualize the Mandelbrot Set with a series of computing, mapping, and rendering tools.
 
-## Getting Started
+![The Mandelbrot Set](https://i.imgur.com/SjG9hQq.png)
 
+Take a look at the [2 Gigapixel Zoomable](https://www.easyzoom.com/imageaccess/0b570fe4405147ee9f41d4c2c080ad6b) version of the image above.
+
+## Getting Started
 ### Environment Setup
 
 Confirm you have [Ruby](https://www.ruby-lang.org/en/documentation/installation/) installed by running `ruby -v` . Using Ruby 2.6.6 at the time this was written.
@@ -83,3 +86,6 @@ Render Tests:
 ```
 ./test.sh render
 ```
+
+![Seahorse Valley](https://i.imgur.com/hGxmnr6.jpg)
+*Seahorse Valley*
