@@ -36,7 +36,7 @@ class RenderTest < SimpleTest
       flower.map.write overwrite: true
 
       folder = 'renders/test/pinwheel'
-      # purge_folder folder
+      purge_folder folder
       pinwheel = PinwheelFactory.new test_resolutions, directory: folder
       # pinwheel.scale = 10
       pinwheel.run options

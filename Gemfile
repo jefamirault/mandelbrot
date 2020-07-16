@@ -3,4 +3,5 @@ source 'https://rubygems.org' do
   gem 'chunky_png'
   # gem 'oily_png'
   gem 'colorize'
+  gem 'rmagick'
 end

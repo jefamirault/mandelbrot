@@ -85,7 +85,7 @@ class MandelbrotFactory
         @map = grid.map
         renderer = Renderer.new(grid)
         renderer.max_iterations = @max_iterations
-        renderer.render export_location: @export_location, prefix: options[:prefix], scale: @scale, color_speed: options[:color_speed]
+        renderer.render export_location: @export_location, label: options[:label], prefix: options[:prefix], scale: @scale, color_speed: options[:color_speed]
 
         t1 = Time.now - t0
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds."

@@ -14,9 +14,7 @@ class Grid
       raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
     end
 
-
-    #
-    if options[:step].nil?
+    if options[:override_step].nil?
       @precision_index = precision_index
       @precision = (precision_index / 3).floor
 
