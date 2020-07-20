@@ -10,11 +10,10 @@ class Grid
   DEFAULT_MAPFILE = 'mapfile'
 
   def initialize(x = 0, y = 0, precision_index = 2, width = 16, height = 9, options = {})
-    if precision_index % 1 != 0
-      raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
-    end
-
     if options[:override_step].nil?
+      if precision_index % 1 != 0
+        raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
+      end
       @precision_index = precision_index
       @precision = (precision_index / 3).floor
 

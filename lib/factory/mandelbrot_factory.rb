@@ -2,12 +2,12 @@ require_relative '../grid'
 require_relative '../renderer'
 
 class MandelbrotFactory
-  attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :map, :scale, :override_step
+  attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolutions, :resolution, :map, :scale, :override_step
 
   def initialize(x, y, max_iterations, start_precision, end_precision, resolutions, options = {})
     @center = [x, y]
     @precisions = (start_precision..end_precision)
-
+    @precision = @precisions.first
     if options[:directory]
       @export_location = options[:directory]
       @mapfile = @export_location + '/mapfile'
@@ -28,6 +28,7 @@ class MandelbrotFactory
     end
 
     @resolutions = resolutions
+    @resolution = @resolutions.first
     @scale = options[:scale]
     @override_step = options[:override_step]
   end
@@ -47,12 +48,12 @@ class MandelbrotFactory
     end
   end
 
-  def resolution=(resolution)
-    if resolution.nil? || resolution.size != 2
-      raise 'Resolution Argument Error.'
-    end
-    @resolutions = [resolution]
-  end
+  # def resolution=(resolution)
+  #   if resolution.nil? || resolution.size != 2
+  #     raise 'Resolution Argument Error.'
+  #   end
+  #   @resolutions = [resolution]
+  # end
 
   def resolutions=(resolutions)
     if resolutions.class == Array && resolutions[0] == Integer
@@ -72,12 +73,12 @@ class MandelbrotFactory
     t0 = Time.now
     puts "#{timestamp} " + "Running Batch Render... "
 
-    @resolutions.each do |resolution|
-      @precisions.each do |precision|
+    # @resolutions.each do |resolution|
+    #   @precisions.each do |precision|
         puts "#{timestamp} " + "Creating grid..."
         t0 = Time.now
 
-        grid = Grid.new(*@center, precision, *resolution, mapfile: @mapfile, override_step: @override_step)
+        grid = Grid.new(*@center, @precision, *@resolution, mapfile: @mapfile, override_step: @override_step)
 
         grid.map = @map
 
@@ -89,8 +90,8 @@ class MandelbrotFactory
 
         t1 = Time.now - t0
         puts "#{timestamp}" + " Render complete".green + " in " + "#{t1.round(3)}".cyan + " seconds."
-      end
-    end
+      # end
+    # end
 
     t1 = Time.now - t0
     puts "#{timestamp}" + " Batch complete".green + " in " + "#{t1.round(3)}".cyan + " seconds."

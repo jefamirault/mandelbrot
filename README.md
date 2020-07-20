@@ -88,4 +88,17 @@ Render Tests:
 ```
 
 ![Seahorse Valley](https://i.imgur.com/hGxmnr6.jpg)
-*Seahorse Valley*
+*Seahorse Valley* - [Gigapixel Render](https://www.easyzoom.com/image/209448)
+
+## Composite Rendering
+
+1. Queue job list determined by Composite Parameters
+2. Spawn 1 or more workers to each render one job from the queue at a time. Monitor your system resources to determine optimal number of workers.
+3. Combine tiles into final composite image.
+
+```
+ruby lib/factory/composite_render.rb
+ruby lib/worker.rb
+### after all tiles are generated
+ruby lib/composite_image.rb
+```
