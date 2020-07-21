@@ -59,6 +59,11 @@ puts mandelbrot.verbose
 #  0+0i meets the criteria for set membership at 20 iterations.
 ```
 
+
+![Seahorse Valley](https://i.imgur.com/hGxmnr6.jpg)
+*Seahorse Valley* - [Gigapixel Render](https://www.easyzoom.com/image/209448)
+
+
 ## Testing
 
 ### Windows
@@ -87,9 +92,6 @@ Render Tests:
 ./test.sh render
 ```
 
-![Seahorse Valley](https://i.imgur.com/hGxmnr6.jpg)
-*Seahorse Valley* - [Gigapixel Render](https://www.easyzoom.com/image/209448)
-
 ## Composite Rendering
 
 1. Queue job list determined by Composite Parameters
@@ -102,3 +104,10 @@ ruby lib/worker.rb
 ### after all tiles are generated
 ruby lib/composite_image.rb
 ```
+
+## Contribute
+
+Search issues on our [Redmine Server](https://secure-ridge-28862.herokuapp.com/projects/mandelbrot/issues?query_id=111) before submitting bugs or pull requests. Contributions, suggestions, feedback all welcome!
+
+![Lightning Storm](https://i.imgur.com/7ra9vxW.jpg)
+*Lightning Storm*

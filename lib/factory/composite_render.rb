@@ -1,7 +1,5 @@
 require_relative 'mandelbrot_factory'
 require 'fileutils'
-require 'pathname'
-# require_relative '../composite_image'
 
 class CompositeRender < MandelbrotFactory
   attr_accessor :center, :iterations, :grid_size, :tile_resolution, :step, :jobs
@@ -73,32 +71,28 @@ class CompositeRender < MandelbrotFactory
 end
 
 
-# @folder = 'renders/lightning/composite'
+@folder = 'renders/lightning/composite'
+
 #
-# @options = {
-#     prefix: 'lightning'
-# }
-# #
-# @options[:center] = [-1.315180982097868, 0.073481649996795]
-# @options[:iterations] = 8000
-# @options[:grid_size] = 32
-# @options[:tile_resolution] = [740, 416]
-# @options[:step] = 2.0e-11
-#
-# @jobs = CompositeRender.new(@options).create_jobs
-#
-# # add jobs to queue
-# @queue = []
-# @jobs.each do |param|
-#   @queue.unshift param
-# end
-#
-# # save queue
-# puts "Updating Queue"
-#
-# # directory = Pathname(@folder).dirname.to_s
-# FileUtils.mkdir_p @folder
-#
-# File.open("#{@folder}/queue", 'w+') do |f|
-#   Marshal.dump(@queue, f)
-# end
+@options[:center] = [-1.315180982097868, 0.073481649996795]
+@options[:iterations] = 8000
+@options[:grid_size] = 32
+@options[:tile_resolution] = [740, 416]
+@options[:step] = 2.0e-11
+
+@jobs = CompositeRender.new(@options).create_jobs
+
+# add jobs to queue
+@queue = []
+@jobs.each do |param|
+  @queue.unshift param
+end
+
+# save queue
+puts "Updating Queue"
+
+FileUtils.mkdir_p @folder
+
+File.open("#{@folder}/queue", 'w+') do |f|
+  Marshal.dump(@queue, f)
+end
