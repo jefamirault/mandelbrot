@@ -1,4 +1,6 @@
 require_relative 'mandelbrot_factory'
+require 'fileutils'
+require 'pathname'
 # require_relative '../composite_image'
 
 class CompositeRender < MandelbrotFactory
@@ -11,7 +13,7 @@ class CompositeRender < MandelbrotFactory
       raise 'invalid composite center coordinates'
     end
 
-    @max_iterations = options[:iterations] || 1000
+    @iterations = options[:iterations] || 1000
 
     @step = options[:step]
 
@@ -19,6 +21,8 @@ class CompositeRender < MandelbrotFactory
     if @tile_resolution.size != 2
       raise 'invalid tile resolution'
     end
+
+    @grid_size = options[:grid_size]
 
     self
   end
@@ -55,13 +59,13 @@ class CompositeRender < MandelbrotFactory
       {
           index: index,
           #  tile resolution
-          resolution: [width, height],
+          resolution: @tile_resolution,
           # step/pixel width
-          step: step,
+          step: @step,
           # center of the whole composite image
           center: center,
           # maximum iterations
-          iterations: iterations
+          iterations: @iterations
       }
     end
   end
@@ -69,75 +73,32 @@ class CompositeRender < MandelbrotFactory
 end
 
 
-# Gigapixel Zoomed Out
+# @folder = 'renders/lightning/composite'
 #
-# composite_center = [-0.75, 0]
-# iterations = 4000
-# grid_size = 16
-# symmetric = true
-# # precision = 13
-# width, height = 3250, 2850
-# step = 0.00005
-
-
-# Render Parameters
-
-# Seahorse Valley
-
-composite_center = [-0.7463, 0.1102]
-iterations = 8000
-grid_size = 64
-# tile resolution
-width, height = 740, 416
-
-step = 0.000000078125
-
-
-# define a job for each tile
-
-# x_start = composite_center[0] - (grid_size - 1) * width / 2 * step
-# y_start = composite_center[1] + (grid_size - 1) * height / 2 * step
+# @options = {
+#     prefix: 'lightning'
+# }
+# #
+# @options[:center] = [-1.315180982097868, 0.073481649996795]
+# @options[:iterations] = 8000
+# @options[:grid_size] = 32
+# @options[:tile_resolution] = [740, 416]
+# @options[:step] = 2.0e-11
 #
-# tile_centers = []
-# (0...grid_size).each do |y|
-#   (0...grid_size).each do |x|
-#     tile_centers << [x_start + (x * width) * step, y_start - (y * height) * step]
-#   end
+# @jobs = CompositeRender.new(@options).create_jobs
+#
+# # add jobs to queue
+# @queue = []
+# @jobs.each do |param|
+#   @queue.unshift param
 # end
 #
-# @jobs = tile_centers.each_with_index.map do |center, index|
-#   {
-#       index: index,
-#       #  tile resolution
-#       resolution: [width, height],
-#       # step/pixel width
-#       step: step,
-#       # center of the whole composite image
-#       center: center,
-#       # maximum iterations
-#       iterations: iterations
-#   }
+# # save queue
+# puts "Updating Queue"
+#
+# # directory = Pathname(@folder).dirname.to_s
+# FileUtils.mkdir_p @folder
+#
+# File.open("#{@folder}/queue", 'w+') do |f|
+#   Marshal.dump(@queue, f)
 # end
-
-@folder = 'renders/seahorse/composite_test'
-
-# run jobs
-
-@options = {
-    prefix: 'seahorse'
-}
-
-@queue = []
-
-# add jobs to queue
-
-@jobs.each do |param|
-  @queue.unshift param
-end
-
-# save queue
-puts "Updating Queue"
-File.open("#{@folder}/queue", 'w+') do |f|
-  Marshal.dump(@queue, f)
-end
-

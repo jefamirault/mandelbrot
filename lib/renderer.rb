@@ -107,7 +107,7 @@ class Renderer
     export_location = options[:export_location] || 'renders'
     prefix = options[:prefix] || ("%.7f" % Time.now.to_f)
     label = options[:label] || "#{grid.center_x.to_f},#{grid.center_y.to_f}_#{grid.width}x#{grid.height}_p#{grid.precision_index}_z#{@max_iterations}"
-    filename = "#{export_location}/#{prefix}_#{label}.png"
+    filename = "#{export_location}/#{prefix}#{label}.png"
     print timestamp + " Exporting" + " to " + "#{filename}".green
 
     png.metadata['center'] = [grid.center_x, grid.center_y].to_s
@@ -118,6 +118,9 @@ class Renderer
     png.metadata['top_left_corner'] = grid.top_left.to_s
     png.metadata['bottom_right_corner'] = grid.bottom_right.to_s
     png.metadata['color_speed'] = options[:color_speed].to_s
+
+
+    FileUtils.mkdir_p export_location
 
     if png.save(filename, :interlace => true)
       t3 = Time.now

@@ -5,6 +5,7 @@ class Mandelbrot
   def initialize(number, iterations = 20)
     @number = number
     @max_iterations = iterations
+    raise 'Invalid Render Parameters. Maximum Iterations not specified.' if @max_iterations.nil?
     @escape_radius = 3.1
   end
 

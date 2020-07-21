@@ -1,10 +1,11 @@
 require_relative 'factory/mandelbrot_factory'
+require 'fileutils'
 
 class Worker
   attr_accessor :queue, :directory, :job
 
   def initialize(options = {})
-    @directory = options[:directory] || 'renders/seahorse/composite_test'
+    @directory = options[:directory] || 'renders/lightning/composite'
   end
 
   def get_job
@@ -14,7 +15,7 @@ class Worker
   end
 
   def run
-    @options = { prefix: 'seahorse' }
+    @options = { prefix: '' }
     load_queue
     until @queue.empty?
       get_job
@@ -22,13 +23,19 @@ class Worker
 
       break if job.nil?
 
-      @zoom_zero = ZoomZeroFactory.new [[64, 60]], export_location: @directory
+
+      @options[:step] = job[:step]
+      @options[:resolution] = job[:resolution]
+      @options[:max_iterations] = job[:iterations]
+      @options[:export_location] = "#{@directory}/tiles"
+      @options[:mapfile] = "#{@directory}/map/composite_#{job[:index]}"
+      @zoom_zero = ZoomZeroFactory.new @options
       @zoom_zero.map = MandelbrotMap.new mapfile: "#{@directory}/map/composite_#{job[:index]}"
       @zoom_zero.map.load
 
-      @zoom_zero.max_iterations = job[:iterations]
-      @zoom_zero.override_step = job[:step]
-      @zoom_zero.resolution = job[:resolution]
+      # @zoom_zero.max_iterations = job[:iterations]
+      # @zoom_zero.step = job[:step]
+      # @zoom_zero.resolution = job[:resolution]
       @zoom_zero.center = job[:center]
       @options[:label] = job[:index]
       @zoom_zero.run @options

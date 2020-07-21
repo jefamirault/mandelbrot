@@ -8,11 +8,9 @@ class CompositeImage
   end
 
   def file_list(subdivide = 1, subtile_index = 0)
-    # renders/seahorse/composite/seahorse_0.png, etc.
     if subdivide == 1
       (0...number_of_tiles).map do |tile|
-        # "#{@directory}/#{@label}_#{tile}.png"
-        "#{@directory}/subcomposite_#{tile}.png"
+        "#{@directory}/tiles/#{@label}#{tile}.png"
       end
     elsif subdivide == 2
       subtiles = []
@@ -21,7 +19,7 @@ class CompositeImage
         col = tile % 64
         new_index = (row / 16).floor * 4 + (col / 16).floor
         if new_index == subtile_index
-          subtiles << "#{@directory}/#{@label}#{tile}.png"
+          subtiles << "#{@directory}/tiles/#{@label}#{tile}.png"
         end
       end
       subtiles
@@ -48,14 +46,13 @@ class CompositeImage
 end
 
 c = CompositeImage.new
-c.directory = 'renders/seahorse/composite_test/recomposite'
-# c.label = 'seahorse'
+c.directory = 'renders/lightning/composite'
 c.label = ''
 c.tile_resolution = [740, 416]
-c.grid_size = 16
+c.grid_size = 32
 
-# c.combine 1
-
-(0...16).each do |subtile|
-  c.combine 2, subtile
-end
+c.combine 1
+#
+# (0...c.grid_size).each do |subtile|
+#   c.combine 2, subtile
+# end

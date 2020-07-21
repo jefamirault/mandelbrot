@@ -10,7 +10,7 @@ class Grid
   DEFAULT_MAPFILE = 'mapfile'
 
   def initialize(x = 0, y = 0, precision_index = 2, width = 16, height = 9, options = {})
-    if options[:override_step].nil?
+    if options[:step].nil?
       if precision_index % 1 != 0
         raise "Invalid arguments. Precision Index (#{precision_index}) must be an integer."
       end
@@ -32,10 +32,10 @@ class Grid
       end
       @step = precise_step.to_f
     else
-      @step = options[:override_step]
+      @step = options[:step]
     end
-    #
 
+    raise "Invalid Render Parameters: Step cannot be great than 1: step = #{@step}" if @step > 1.0
 
     @center_x = nearest_step(x, @step)
     @center_y = nearest_step(y, @step)
@@ -47,7 +47,12 @@ class Grid
   end
 
   def precise_step
-    BigDecimal(@step.to_s)
+    compare = if @step.class == Rational
+                @step.to_f.to_s
+              elsif @step.class == Float
+                @step.to_s
+              end
+    BigDecimal(compare)
   end
 
   def include?(x, y)
