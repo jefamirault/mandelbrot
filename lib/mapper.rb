@@ -1,4 +1,4 @@
-require_relative 'factory/mandelbrot_factory'
+require_relative 'factory/ot_factory'
 require 'fileutils'
 
 class Mapper

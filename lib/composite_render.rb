@@ -71,14 +71,15 @@ class CompositeRender < MandelbrotFactory
 end
 
 
-@folder = 'renders/lightning/composite'
+@folder = 'renders/flower/composite'
 
 #
-@options[:center] = [-1.315180982097868, 0.073481649996795]
+@options = {}
+@options[:center] = [-0.4170662, 0.60295913]
 @options[:iterations] = 8000
 @options[:grid_size] = 32
 @options[:tile_resolution] = [740, 416]
-@options[:step] = 2.0e-11
+@options[:step] = 1.25e-6
 
 @jobs = CompositeRender.new(@options).create_jobs
 

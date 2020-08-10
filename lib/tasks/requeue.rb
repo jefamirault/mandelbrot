@@ -7,7 +7,7 @@
 
 
 require 'fileutils'
-require_relative '../factory/composite_render'
+require_relative '../factory/e_render'
 
 @directory = 'renders/lightning/composite'
 

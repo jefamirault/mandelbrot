@@ -46,7 +46,7 @@ class CompositeImage
 end
 
 c = CompositeImage.new
-c.directory = 'renders/lightning/composite'
+c.directory = 'renders/flower/composite'
 c.label = ''
 c.tile_resolution = [740, 416]
 c.grid_size = 32

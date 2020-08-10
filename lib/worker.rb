@@ -1,11 +1,11 @@
-require_relative 'factory/mandelbrot_factory'
+require_relative 'factory/ot_factory'
 require 'fileutils'
 
 class Worker
   attr_accessor :queue, :directory, :job
 
   def initialize(options = {})
-    @directory = options[:directory] || 'renders/lightning/composite'
+    @directory = options[:directory] || 'renders/flower/composite'
   end
 
   def get_job

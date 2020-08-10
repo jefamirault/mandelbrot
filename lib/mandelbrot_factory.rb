@@ -1,4 +1,4 @@
-require_relative '../grid'
+require_relative '../d'
 require_relative '../renderer'
 
 class MandelbrotFactory
