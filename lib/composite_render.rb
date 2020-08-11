@@ -1,4 +1,5 @@
 require_relative 'mandelbrot_factory'
+require 'json'
 require 'fileutils'
 
 class CompositeRender < MandelbrotFactory
@@ -15,7 +16,7 @@ class CompositeRender < MandelbrotFactory
 
     @step = options[:step]
 
-    @tile_resolution = options[:tile_resolution]
+    @tile_resolution = options[:resolution]
     if @tile_resolution.size != 2
       raise 'invalid tile resolution'
     end
@@ -70,30 +71,26 @@ class CompositeRender < MandelbrotFactory
 
 end
 
-
-@folder = 'renders/flower/composite'
-
 #
-@options = {}
-@options[:center] = [-0.4170662, 0.60295913]
-@options[:iterations] = 8000
-@options[:grid_size] = 32
-@options[:tile_resolution] = [740, 416]
-@options[:step] = 1.25e-6
-
-@jobs = CompositeRender.new(@options).create_jobs
-
-# add jobs to queue
-@queue = []
-@jobs.each do |param|
-  @queue.unshift param
-end
-
-# save queue
-puts "Updating Queue"
-
-FileUtils.mkdir_p @folder
-
-File.open("#{@folder}/queue", 'w+') do |f|
-  Marshal.dump(@queue, f)
-end
+#
+# blueprint = JSON.parse File.read("blueprint/sample.json")
+#
+# @options = blueprint.transform_keys(&:to_sym)
+#
+# @folder = @options[:directory]
+# @jobs = CompositeRender.new(@options).create_jobs
+#
+# # add jobs to queue
+# @queue = []
+# @jobs.each do |param|
+#   @queue.unshift param
+# end
+#
+# # save queue
+# puts "Updating Queue"
+#
+# FileUtils.mkdir_p @folder
+#
+# File.open("#{@folder}/queue", 'w+') do |f|
+#   Marshal.dump(@queue, f)
+# end

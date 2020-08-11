@@ -3,25 +3,25 @@
 # will be added to the front of the queue.
 
 # FILL IN THIS PART MANUALLY
-@missing_renders = [457]
+@missing_renders = [6,7,9]
 
 
 require 'fileutils'
-require_relative '../factory/e_render'
+require_relative '../composite_render'
 
-@directory = 'renders/lightning/composite'
+@directory = 'renders/test/pinwheel'
 
 @options = {
-    prefix: 'lightning'
+    prefix: ''
 }
 
 # recreate jobs
 
-@options[:center] = [-1.315180982097868, 0.073481649996795]
+@options[:center] = [0.281717921930775, 0.5771052841488505]
 @options[:iterations] = 8000
-@options[:grid_size] = 32
-@options[:tile_resolution] = [740, 416]
-@options[:step] = 2.0e-11
+@options[:grid_size] = 6
+@options[:resolution] = [740, 416]
+@options[:step] = 1.0e-7
 
 @jobs = CompositeRender.new(@options).create_jobs
 

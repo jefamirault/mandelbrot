@@ -151,7 +151,7 @@ class Grid
   end
 
   def compute_mandelbrot(iterations = 20)
-    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + "Precision".cyan + ": " + "#{@precision_index}".red + ", Step".cyan + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
+    puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
     raise 'Missing map data' if @map.nil?

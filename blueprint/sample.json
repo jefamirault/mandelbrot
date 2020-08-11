@@ -1,0 +1,10 @@
+{
+  "label": "Pinwheel",
+  "directory": "renders/test/pinwheel",
+  "center": [0.281717921930775, 0.5771052841488505],
+  "iterations": 8000,
+  "step": 6.0e-10,
+  "resolutiona": [1920, 1080],
+  "resolution": [740, 416],
+  "grid_size": 2
+}

@@ -4,4 +4,5 @@ source 'https://rubygems.org' do
   # gem 'oily_png'
   gem 'colorize'
   gem 'rmagick'
+  gem 'json'
 end

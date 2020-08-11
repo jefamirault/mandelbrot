@@ -1,5 +1,4 @@
-require_relative '../d'
-require_relative '../renderer'
+require_relative 'renderer'
 
 class MandelbrotFactory
   attr_accessor :center, :max_iterations, :precisions, :mapfile, :export_location, :resolution, :map, :scale, :step

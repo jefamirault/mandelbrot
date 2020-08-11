@@ -1,11 +1,13 @@
-require_relative 'factory/ot_factory'
+require_relative 'mandelbrot_factory'
 require 'fileutils'
+require 'parallel'
 
 class Worker
   attr_accessor :queue, :directory, :job
 
   def initialize(options = {})
-    @directory = options[:directory] || 'renders/flower/composite'
+    @directory = options[:directory] || 'renders/test/pinwheel'
+    @queue = options[:queue]
   end
 
   def get_job
@@ -17,7 +19,7 @@ class Worker
   def run
     @options = { prefix: '' }
     load_queue
-    until @queue.empty?
+    until @queue.size == 0
       get_job
       job = @job
 
@@ -33,9 +35,6 @@ class Worker
       @zoom_zero.map = MandelbrotMap.new mapfile: "#{@directory}/map/composite_#{job[:index]}"
       @zoom_zero.map.load
 
-      # @zoom_zero.max_iterations = job[:iterations]
-      # @zoom_zero.step = job[:step]
-      # @zoom_zero.resolution = job[:resolution]
       @zoom_zero.center = job[:center]
       @options[:label] = job[:index]
       @zoom_zero.run @options
@@ -57,5 +56,18 @@ class Worker
   end
 end
 
-worker = Worker.new
-worker.run
+@directory = 'renders/test/pinwheel'
+
+# File.open("#{@directory}/queue") do |f|
+#   @array = Marshal.load(f)
+# end
+#
+# queue = Queue.new
+#
+# until @array.empty? do
+#   queue.push @array.pop
+# end
+
+Parallel.map(4.times.to_a, in_processes: 4) do |i|
+  Worker.new.run
+end
