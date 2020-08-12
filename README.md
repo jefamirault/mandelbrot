@@ -94,15 +94,32 @@ Render Tests:
 
 ## Composite Rendering
 
-1. Queue job list determined by Composite Parameters
-2. Spawn 1 or more workers to each render one job from the queue at a time. Monitor your system resources to determine optimal number of workers.
-3. Combine tiles into final composite image.
-
+1. Define render parameters in a blueprint file.
+```json
+{
+  "label": "Pinwheel",
+  "directory": "renders/test/pinwheel",
+  "center": [0.281717921930775, 0.5771052841488505],
+  "iterations": 8000,
+  "step": 6.0e-10,
+  "resolution": [740, 416],
+  "grid_size": 16
+}
 ```
-ruby lib/factory/composite_render.rb
-ruby lib/worker.rb
-### after all tiles are generated
-ruby lib/composite_image.rb
+
+2. Create a job queue from the blueprint.
+```
+ruby lib/controller.rb blueprint/sample.json queue
+```
+3. Process jobs from the queue. On Linux and Mac you may optionally pass a number_of_processes argument for parallel processing. On Windows you must start each process manually. (version 0.1.0)
+```
+ruby lib/controller.rb blueprint/sample.json process 4
+```
+
+4. Combine tiles into final composite image.
+```
+### after all workers are complete
+ruby lib/composite_image.rb blueprint/sample.json
 ```
 
 ## Contribute

@@ -6,7 +6,7 @@ class Worker
   attr_accessor :queue, :directory, :job
 
   def initialize(options = {})
-    @directory = options[:directory] || 'renders/test/pinwheel'
+    @directory = options[:directory]
     @queue = options[:queue]
   end
 
@@ -17,6 +17,7 @@ class Worker
   end
 
   def run
+    sleep rand
     @options = { prefix: '' }
     load_queue
     until @queue.size == 0
@@ -54,20 +55,4 @@ class Worker
       Marshal.dump(@queue, f)
     end
   end
-end
-
-@directory = 'renders/test/pinwheel'
-
-# File.open("#{@directory}/queue") do |f|
-#   @array = Marshal.load(f)
-# end
-#
-# queue = Queue.new
-#
-# until @array.empty? do
-#   queue.push @array.pop
-# end
-
-Parallel.map(4.times.to_a, in_processes: 4) do |i|
-  Worker.new.run
 end

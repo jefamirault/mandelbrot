@@ -14,6 +14,7 @@ class CompositeImage
         "#{@directory}/tiles/#{@label}#{tile}.png"
       end
     elsif subdivide == 2
+      # TODO get rid of constants
       subtiles = []
       (0...4096).each do |tile|
         row = (tile / 64).floor

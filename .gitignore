@@ -4,3 +4,5 @@ log.txt
 mapfile*
 .byebug_history
 Gemfile.lock
+blueprint/*
+!blueprint/sample.json
