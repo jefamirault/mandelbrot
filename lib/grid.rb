@@ -62,6 +62,10 @@ class Grid
     in_bounds && on_step
   end
 
+  def center
+    [center_x, center_y]
+  end
+
   def x_min
     center = BigDecimal(@center_x.to_s)
     if width.even?
@@ -95,6 +99,14 @@ class Grid
     end.to_f
   end
 
+  def x_range
+    x_max - x_min
+  end
+
+  def y_range
+    y_max - y_min
+  end
+
   def top_left
     [x_min, y_max]
   end
@@ -109,9 +121,11 @@ class Grid
     precise_y = BigDecimal(y_max.to_s)
 
     x = precise_x
+    half_step = @step / 2
     while x <= x_max
       y = precise_y
-      while y >= y_min
+      # avoid rounding errors removing/adding an extra row
+      while y > y_min - half_step
         point = [x.to_f, y.to_f]
         hash[point] = @map.get point
         y -= @step
@@ -151,6 +165,10 @@ class Grid
   end
 
   def compute_mandelbrot(iterations = 20)
+    if points.size != number_of_points
+      puts "WARNING: Number of points does not match grid size. Expected: #{number_of_points}, got: #{points.size}"
+      # raise 'Grid Error'
+    end
     puts "Center".cyan + ": " + "(" + "#{center_x}".red + ", " + "#{center_y}".red + "), " + ": " + "#{step}".red + ", " + "Resolution".cyan + ": " + "#{width}x#{height}".red
     puts "Top Left Corner".cyan + ":  (" + "#{x_min}".red + ", " + "#{y_max}".red + ")" + ", " + "Bottom Right Corner".cyan + ": " + "(" + "#{x_max}".red + ", " + "#{y_min}".red + ")"
 
