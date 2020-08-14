@@ -1,6 +1,7 @@
 require 'json'
 require 'fileutils'
 require_relative 'composite_render'
+require_relative 'composite_image'
 require_relative 'worker'
 
 if ARGV[0].nil?
@@ -67,3 +68,15 @@ if command == 'process'
   end
 end
 
+if command == 'composite'
+  # json = File.read(ARGV[0])
+  # blueprint = JSON.parse json
+  # options = blueprint.transform_keys(&:to_sym)
+
+  c = CompositeImage.new
+  c.directory = options[:directory]
+  c.label = ''
+  c.tile_resolution = options[:resolution]
+  c.grid_size = options[:grid_size]
+  c.combine 1
+end

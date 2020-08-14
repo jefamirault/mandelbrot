@@ -41,29 +41,12 @@ class CompositeImage
       mosaic.write "#{@directory}/subcomposite_#{subtile}.png"
     end
   end
+  # Usage:
+  # (0...c.grid_size).each do |subtile|
+  #   c.combine 2, subtile
+  # end
 
   def condense(size)
 
   end
 end
-
-if ARGV[0].nil?
-  raise 'Error: Missing arguments. Render blueprint required.'
-end
-
-json = File.read(ARGV[0])
-blueprint = JSON.parse json
-options = blueprint.transform_keys(&:to_sym)
-
-c = CompositeImage.new
-c.directory = options[:directory]
-c.label = ''
-c.tile_resolution = options[:resolution]
-c.grid_size = options[:grid_size]
-c.combine 1
-
-
-#
-# (0...c.grid_size).each do |subtile|
-#   c.combine 2, subtile
-# end

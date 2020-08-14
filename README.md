@@ -119,7 +119,7 @@ ruby lib/controller.rb blueprint/sample.json process 4
 4. Combine tiles into final composite image.
 ```
 ### after all workers are complete
-ruby lib/composite_image.rb blueprint/sample.json
+ruby lib/controller.rb blueprint/sample.json composite
 ```
 
 ## Contribute
