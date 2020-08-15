@@ -21,7 +21,6 @@ class Worker
   end
 
   def run
-    sleep rand
     @options = { prefix: '' }
     load_queue
     until @queue.size == 0
