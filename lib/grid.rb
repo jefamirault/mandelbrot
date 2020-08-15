@@ -122,7 +122,7 @@ class Grid
 
     x = precise_x
     half_step = @step / 2
-    while x <= x_max
+    while x < x_max + half_step
       y = precise_y
       # avoid rounding errors removing/adding an extra row
       while y > y_min - half_step
