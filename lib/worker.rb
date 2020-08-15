@@ -11,9 +11,13 @@ class Worker
   end
 
   def get_job
-    load_queue
-    @job = @queue.pop
-    update_queue
+    File.open("#{@directory}/queue", 'r+') do |f|
+      f.flock(File::LOCK_EX)
+      @queue = Marshal.load(f)
+      @job = @queue.pop
+      f.rewind
+      Marshal.dump(@queue, f)
+    end
   end
 
   def run
@@ -25,7 +29,6 @@ class Worker
       job = @job
 
       break if job.nil?
-
 
       @options[:step] = job[:step]
       @options[:resolution] = job[:resolution]
@@ -46,13 +49,10 @@ class Worker
   end
 
   def load_queue
-    File.open("#{@directory}/queue") do |f|
+    File.open("#{@directory}/queue", 'r') do |f|
+      f.flock(File::LOCK_SH)
       @queue = Marshal.load(f)
     end
   end
-  def update_queue
-    File.open("#{@directory}/queue", 'w+') do |f|
-      Marshal.dump(@queue, f)
-    end
-  end
+
 end
