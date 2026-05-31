@@ -1,0 +1,110 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mandelbrot Generator</title>
+  <link rel="stylesheet" href="style.css" />
+</head>
+<body>
+  <header>
+    <h1>Mandelbrot Generator</h1>
+    <p class="sub">Vanilla JS &middot; configurable palette &middot; saveable image</p>
+  </header>
+
+  <main>
+    <section class="canvas-wrap">
+      <canvas id="canvas" width="800" height="600"></canvas>
+      <div class="overlay" id="overlay" hidden>Rendering&hellip;</div>
+      <p class="hint">Tip: click the image to re-center on that point. Scroll to zoom.</p>
+    </section>
+
+    <aside class="controls">
+      <fieldset>
+        <legend>Anchor point (center)</legend>
+        <label>Real (x)
+          <input type="text" id="centerX" value="-0.5" spellcheck="false" />
+        </label>
+        <label>Imaginary (y)
+          <input type="text" id="centerY" value="0" spellcheck="false" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>View rectangle</legend>
+        <label>Width (real span)
+          <input type="number" id="rectW" value="3.5" step="any" min="0" />
+        </label>
+        <label>Height (imag span)
+          <input type="number" id="rectH" value="2.625" step="any" min="0" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Output size (pixels)</legend>
+        <label>Image width
+          <input type="number" id="pxW" value="800" step="1" min="16" max="4096" />
+        </label>
+        <label>Image height
+          <input type="number" id="pxH" value="600" step="1" min="16" max="4096" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Iteration parameters</legend>
+        <label>Max iterations
+          <input type="number" id="maxIter" value="500" step="1" min="1" max="100000" />
+        </label>
+        <label>Escape radius
+          <input type="number" id="escapeR" value="2" step="any" min="0" />
+        </label>
+        <label>Divergence rate (exponent d in z&rarr;z<sup>d</sup>+c)
+          <input type="number" id="power" value="2" step="any" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Color palette</legend>
+        <label>Preset
+          <select id="palettePreset">
+            <option value="classic">Classic (blue/gold)</option>
+            <option value="fire">Fire</option>
+            <option value="ice">Ice</option>
+            <option value="grayscale">Grayscale</option>
+            <option value="rainbow">Rainbow</option>
+            <option value="custom">Custom (stops below)</option>
+          </select>
+        </label>
+        <label>Color cycles
+          <input type="number" id="cycles" value="1" step="any" min="0.1" />
+        </label>
+        <label>Color offset
+          <input type="range" id="offset" value="0" min="0" max="1" step="0.01" />
+        </label>
+        <label class="check">
+          <input type="checkbox" id="smooth" checked /> Smooth coloring
+        </label>
+        <label>Interior color
+          <input type="color" id="interiorColor" value="#000000" />
+        </label>
+
+        <div id="customStops" class="custom-stops" hidden>
+          <p class="stops-title">Custom gradient stops</p>
+          <div id="stopList"></div>
+          <button type="button" id="addStop" class="ghost">+ Add stop</button>
+        </div>
+      </fieldset>
+
+      <div class="actions">
+        <button type="button" id="renderBtn" class="primary">Render</button>
+        <button type="button" id="saveBtn">Save PNG</button>
+        <button type="button" id="resetBtn" class="ghost">Reset view</button>
+      </div>
+
+      <p class="status" id="status"></p>
+    </aside>
+  </main>
+
+  <script src="app.js"></script>
+</body>
+</html>
