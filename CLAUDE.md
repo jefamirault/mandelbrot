@@ -21,27 +21,48 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
 
 ## Architecture
 
-### Worker pool + progressive tiled rendering
+### Tile pyramid cache (Google-Maps-style) + worker pool
 - A pool of `NUM_WORKERS` (= `navigator.hardwareConcurrency`, clamped 2–8) is created once.
-- The image is split into `TILE` (128px) tiles, rendered at subsample passes `PASSES = [8,2,1]`
-  (coarse → fine). Jobs are queued FIFO so *all* coarse tiles run before finer ones → a
-  full blocky preview appears instantly, then sharpens.
-- `currentGen` is a generation token. Every `render()` bumps it and clears `jobQueue`;
-  stale tile results (wrong `gen`) are discarded on arrival instead of being painted.
-- Workers report back via `onWorkerDone`, which paints the tile (`putImageData`) and
-  immediately pumps the next job to keep the worker busy.
+- The world is a **quadtree**: level `L` has `2^L × 2^L` tiles, each `TILE_PX` (256px) and
+  spanning `ROOT_SPAN/2^L` (`ROOT_SPAN = 4`, a power of two → tile edges are exact in
+  fixed-point). A tile is keyed `(L, ix, iy)` with `ix/iy` **BigInt** (deep zoom blows past
+  2^53). `pickLevel` chooses `L` so a tile pixel ≈ a viewport pixel (blits stay near 1:1).
+- **Zoom/pan stay continuous.** `coverTiles()` finds the snapped tiles intersecting the view
+  and `drawImage`s them (resampled) onto the canvas — the "hybrid" of smooth view + snapped grid.
+- **Workers emit Float32 *iteration values*, not pixels** (`-1` = interior; always the smooth
+  value). Coloring is a cheap main-thread pass (`colorizePixels`), so palette/smooth/cycles/
+  offset/interior edits call `repaint()` and recolor cached tiles with **zero recompute**.
+- **Two-layer cache.** `tileCache` is an in-memory LRU (`MAX_CACHE_TILES`); `IndexedDB`
+  (`mandelbrot-tiles`) is the durable backing store so tiles survive reloads. `render()` paints
+  memory hits immediately, then `hydrateFromDB` resolves misses from IDB, and only what's left
+  is computed (`enqueueCompute`). `persistTile` write-throughs to IDB. **Falls back to
+  memory-only** if IDB can't open (`dbReady` always resolves, never rejects).
+- **Neighbor/parent/child are *derived*** from the key (`parentKey`/`childKeys`/`neighborKeys`
+  = arithmetic + a Map lookup), not stored pointers — O(1) and no dangling refs on eviction.
+- Misses show an **upscaled nearest cached ancestor** as an instant placeholder
+  (`blitPlaceholder`) — the maps-like blurry-zoom — replaced when the exact tile computes.
+  (This replaced the old `PASSES` subsample preview.)
+- `currentGen` is a generation token. Every `render()` bumps it and clears `jobQueue` +
+  `pendingKeys`; stale tile/IDB results (wrong `gen`) are discarded instead of painted.
+- `tileToScratch` colorizes a tile's values into the shared `scratch` canvas before each blit.
 
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
 - The view **center** is stored in high precision as BigInt fixed-point (`state.cx/cy`,
   value ≈ `X / 2^state.frac`). Precision auto-scales with zoom via `neededFrac` /
   `rescaleState`. Per-pixel offsets stay tiny and are handled in plain doubles.
-- `computeReferenceOrbit` iterates `Z → Z² + C` at full precision for the center,
-  storing each `Zₙ` as a double. It's broadcast to all workers once per render (a `ref`
-  message, ordered before the `tile` messages).
+- `computeReferenceOrbit` iterates `Z → Z² + C` at full precision for the **view center**,
+  storing each `Zₙ` as a double. One reference per render serves every tile (broadcast as a
+  `ref` message before the `tile` messages). Iteration values are **reference-independent**,
+  so a tile computed under one render's reference is valid forever — that's what makes them
+  cacheable and reusable as the view moves.
 - Workers compute each pixel as a delta from the reference using only doubles, with
   **automatic rebasing** (Zhuoran's method) — this self-extends short references and
   suppresses glitches without a separate glitch-correction pass. See `perturb()` in `WORKER_SRC`.
+- **Precision-preserving tile offsets.** A tile job carries `tileOriginDx/Dy` — the tile
+  origin's offset from the reference center, formed by **fixed-point subtraction**
+  (`tileLeftFp − state.cx → double`) on the main thread. The worker builds each pixel's `dc`
+  from that, so it never forms an absolute coordinate (catastrophic cancellation at depth).
 - `power !== 2` falls back to direct double iteration (`iterate()`), i.e. **no deep
   precision** — the status line says so.
 
@@ -78,3 +99,10 @@ Float64 dies at ~1e-14. To go deeper:
   locations; a rare pathological spot could still artifact.
 - Deeper zoom needs higher max-iter (boundary detail grows with depth).
 - `power != 2` has no extended precision.
+- **Tiles are keyed by `paramHash = power|escapeR|maxIter`**, so changing any of those is a
+  full recompute (escaped pixels are reusable, interior aren't — a future optimization).
+  Palette changes are *not* in the key (they recolor via `repaint`).
+- Hybrid resampling slightly blurs tiles when the view scale doesn't exactly match the chosen
+  level's; `pickLevel` rounds to keep it minimal.
+- Cache bounds are tunable: `MAX_CACHE_TILES` (memory LRU) and `DB_MAX` (IndexedDB prune).
+- IndexedDB on some `file://` origins is blocked/opaque → automatic memory-only fallback.

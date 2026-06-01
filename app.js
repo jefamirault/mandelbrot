@@ -279,10 +279,12 @@ function readParams() {
 
 // ---------- Worker source (inlined so it also runs from file://) ------------
 // Receives the reference orbit once per render ('ref' message), then renders
-// tiles ('tile' message). For power==2 it uses perturbation + automatic
-// rebasing (Zhuoran's method) so deep zooms stay accurate with double math and
-// short references self-extend without glitch corruption. For power!=2 it falls
-// back to direct double iteration (no extended precision at depth).
+// tiles ('tile' message). Output is a Float32Array of *iteration values* (the
+// smooth/continuous escape count; -1 = interior), NOT pixels — coloring is a
+// cheap main-thread pass (see colorizePixels), so palette tweaks never trigger
+// recompute and the values cache cleanly. For power==2 it uses perturbation +
+// automatic rebasing (Zhuoran's method) so deep zooms stay accurate with double
+// math; power!=2 falls back to direct double iteration (no precision at depth).
 const WORKER_SRC = `
 let REF = { Zx: null, Zy: null, refLen: 0 };
 
@@ -293,18 +295,22 @@ self.onmessage = function (e) {
 };
 
 function renderTile(j) {
-  const lut = j.lut, interior = j.interior;
-  const maxIter = j.maxIter, power = j.power, smooth = j.smooth;
+  const maxIter = j.maxIter, power = j.power;
   const escapeSq = j.escapeR * j.escapeR;
   const lnEscape = Math.log(j.escapeR);
   const lnPow = Math.log(Math.abs(power) || 2);
-  const cycles = j.cycles, offset = j.offset, invMax = j.invMax;
-  const scale = j.scale, left = j.left, top = j.top;
-  const refPxX = j.refPxX, refPxY = j.refPxY;
-  const x0 = j.x0, y0 = j.y0, tileW = j.tileW, tileH = j.tileH, step = j.step;
+  const N = j.tilePx, tileScale = j.tileScale;
+  // Perturbation works in offsets from the reference center: odx/ody is the
+  // tile origin's offset (small doubles built via fixed-point on the main
+  // thread), so we never form an absolute coordinate (catastrophic at depth).
+  const odx = j.tileOriginDx, ody = j.tileOriginDy;
+  const left = j.left, top = j.top;   // absolute origin, fallback (power!=2) only
   const usePerturb = (power === 2 && REF.Zx);
   const Zx = REF.Zx, Zy = REF.Zy, refLen = REF.refLen;
-  const buf = new Uint8ClampedArray(tileW * tileH * 4);
+  const iter = new Float32Array(N * N);
+
+  // Always returns the smooth/continuous value so toggling 'smooth' coloring is
+  // free; the non-smooth look is recovered by flooring it at paint time.
 
   // --- Perturbation + rebasing: delta orbit relative to the reference. ---
   function perturb(dcx, dcy) {
@@ -314,7 +320,6 @@ function renderTile(j) {
       const zx = Zxr + dzx, zy = Zyr + dzy;
       const zmag2 = zx * zx + zy * zy;
       if (zmag2 > escapeSq) {
-        if (!smooth) return i;
         const logZn = Math.log(zmag2) / 2;
         return i + 1 - Math.log(logZn / lnEscape) / Math.LN2;
       }
@@ -355,53 +360,31 @@ function renderTile(j) {
       if (mag2 > escapeSq) break;
     }
     if (i >= maxIter && mag2 <= escapeSq) return -1;
-    if (!smooth) return i;
     const logZn = Math.log(mag2) / 2;
     return i + 1 - Math.log(logZn / lnEscape) / lnPow;
   }
 
-  for (let ty = 0; ty < tileH; ty += step) {
-    const gy = y0 + ty;
-    for (let tx = 0; tx < tileW; tx += step) {
-      const gx = x0 + tx;
-      let val;
+  let p = 0;
+  for (let ty = 0; ty < N; ty++) {
+    const fy = ty + 0.5;
+    for (let tx = 0; tx < N; tx++) {
+      const fx = tx + 0.5;
       if (usePerturb) {
-        const dcx = ((gx + 0.5) - refPxX) * scale;
-        const dcy = (refPxY - (gy + 0.5)) * scale;
-        val = perturb(dcx, dcy);
+        iter[p++] = perturb(odx + fx * tileScale, ody - fy * tileScale);
       } else {
-        val = iterate(left + (gx + 0.5) * scale, top - (gy + 0.5) * scale);
-      }
-      let r, g, b;
-      if (val < 0) { r = interior[0]; g = interior[1]; b = interior[2]; }
-      else {
-        let t = (val * invMax) * cycles + offset;
-        t = t - Math.floor(t);
-        const o = ((t * 255) | 0) * 3;
-        r = lut[o]; g = lut[o + 1]; b = lut[o + 2];
-      }
-      const yend = Math.min(ty + step, tileH);
-      const xend = Math.min(tx + step, tileW);
-      for (let by = ty; by < yend; by++) {
-        let idx = (by * tileW + tx) * 4;
-        for (let bx = tx; bx < xend; bx++) {
-          buf[idx] = r; buf[idx + 1] = g; buf[idx + 2] = b; buf[idx + 3] = 255;
-          idx += 4;
-        }
+        iter[p++] = iterate(left + fx * tileScale, top - fy * tileScale);
       }
     }
   }
   self.postMessage(
-    { jobId: j.jobId, gen: j.gen, x0: x0, y0: y0, tileW: tileW, tileH: tileH, buf: buf.buffer },
-    [buf.buffer]
+    { jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer },
+    [iter.buffer]
   );
 }
 `;
 
 // ---------- Worker pool ----------
 const NUM_WORKERS = Math.max(2, Math.min(8, navigator.hardwareConcurrency || 4));
-const TILE = 128;
-const PASSES = [8, 2, 1]; // subsample steps: coarse -> fine
 
 let workers = [];
 let idleWorkers = [];
@@ -410,6 +393,266 @@ let currentGen = 0;
 let pendingTiles = 0;
 let renderStart = 0;
 let renderParams = null;
+let currentLut = null;
+
+// ============================================================================
+// Tile pyramid (Google-Maps-style cache)
+// ----------------------------------------------------------------------------
+// The world is a quadtree: level L has 2^L x 2^L tiles, each TILE_PX square and
+// spanning ROOT_SPAN/2^L in the complex plane. A tile is identified by
+// (L, ix, iy) with ix/iy BigInt (deep zoom blows past 2^53). Each cached tile
+// stores Float32 iteration values; neighbor/parent/child are *derived* from the
+// key (arithmetic + a Map lookup) rather than stored as pointers — same O(1)
+// access, no dangling references when tiles are evicted. ROOT_SPAN = 4 (a power
+// of two) makes every tile boundary a dyadic rational, i.e. exact in fixed-point.
+// ============================================================================
+const TILE_PX = 256;            // pyramid tile resolution (px per side)
+const ROOT_SPAN = 4;            // world span of level 0 (contains the whole set)
+const MAX_CACHE_TILES = 384;    // in-memory LRU bound (~100 MB of Float32 values)
+
+let paramHash = "";             // tiles are only reusable within the same iter params
+let currentCover = null;        // tiles covering the current view (for repaint)
+const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts }
+const pendingKeys = new Set();  // keys with an in-flight compute job
+const pendingDesc = new Map();  // key -> cover descriptor (where to paint the result)
+let coverCount = 0, hitCount = 0, computeCount = 0; // status-line instrumentation
+
+// Scratch tile canvas: iteration values are colorized here, then drawImage()'d
+// (and resampled) onto the viewport. Reused to avoid per-tile allocation.
+const scratch = document.createElement("canvas");
+scratch.width = TILE_PX; scratch.height = TILE_PX;
+const sctx = scratch.getContext("2d");
+
+// ---- Fixed-point pyramid geometry (frac bits, matching state.frac) ----
+const rootLeftFp = (frac) => fpFromDecimalString("-2.5", frac); // ROOT_LEFT = -0.5 - 2
+const rootTopFp = (frac) => fpFromDecimalString("2", frac);     // ROOT_TOP  =  0   + 2
+// ROOT_SPAN = 4 = 2^2, so a level-L tile spans exactly 2^(frac+2-L) fixed-point units.
+const tileSpanFp = (L, frac) => 1n << BigInt(frac + 2 - L);
+// Floor division for BigInt (JS `/` truncates toward zero; we need toward -inf).
+function floorDivBig(a, b) {
+  let q = a / b;
+  if ((a % b !== 0n) && ((a < 0n) !== (b < 0n))) q -= 1n;
+  return q;
+}
+// Level whose tile pixels ~match the viewport's, so blits stay near 1:1.
+// 6 = log2(TILE_PX) - log2(ROOT_SPAN) = 8 - 2.
+const pickLevel = (spanW, pxW) => Math.max(0, Math.round(Math.log2(pxW / spanW) - 6));
+
+// ---- Derived links (the neighbor/parent/child "references") ----
+const tileKey = (L, ix, iy) => `${paramHash}|${L}:${ix}:${iy}`;
+const parentKey = (L, ix, iy) => L > 0 ? tileKey(L - 1, ix >> 1n, iy >> 1n) : null;
+const childKeys = (L, ix, iy) =>
+  [tileKey(L + 1, ix * 2n, iy * 2n), tileKey(L + 1, ix * 2n + 1n, iy * 2n),
+   tileKey(L + 1, ix * 2n, iy * 2n + 1n), tileKey(L + 1, ix * 2n + 1n, iy * 2n + 1n)];
+const neighborKeys = (L, ix, iy) =>
+  [tileKey(L, ix - 1n, iy), tileKey(L, ix + 1n, iy),
+   tileKey(L, ix, iy - 1n), tileKey(L, ix, iy + 1n)];
+
+// ---- LRU cache access ----
+function cacheGet(key) {
+  const t = tileCache.get(key);
+  if (!t) return null;
+  tileCache.delete(key); tileCache.set(key, t); // move to most-recently-used
+  return t;
+}
+function cachePut(t) {
+  tileCache.set(t.key, t);
+  while (tileCache.size > MAX_CACHE_TILES) {
+    tileCache.delete(tileCache.keys().next().value); // evict oldest
+  }
+}
+
+// ============================================================================
+// IndexedDB persistence: the memory LRU is the hot layer; this is the durable
+// backing store so tiles survive reloads. Iteration values (Float32) and BigInt
+// indices (as strings) structured-clone cleanly. Degrades to memory-only if the
+// store can't be opened (some file:// configurations).
+// ============================================================================
+const DB_NAME = "mandelbrot-tiles", DB_STORE = "tiles", DB_MAX = 1500;
+// Always resolves (to the db, or null for memory-only) — never rejects, so the
+// await in hydrateFromDB can't throw if indexedDB is missing/blocked (the open
+// call itself can throw synchronously on some file:// origins).
+const dbReady = new Promise((resolve) => {
+  try {
+    const req = indexedDB.open(DB_NAME, 1);
+    req.onupgradeneeded = () => {
+      const os = req.result.createObjectStore(DB_STORE, { keyPath: "key" });
+      os.createIndex("ts", "ts"); // oldest-first pruning
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => { console.warn("IndexedDB unavailable — memory-only cache"); resolve(null); };
+  } catch (e) {
+    console.warn("IndexedDB unavailable — memory-only cache");
+    resolve(null);
+  }
+});
+
+function persistTile(t) {
+  dbReady.then((db) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).put({
+        key: t.key, iter: t.iter, L: t.L,
+        ix: t.ix.toString(), iy: t.iy.toString(),
+        paramHash: t.paramHash, ts: t.ts,
+      });
+      tx.oncomplete = () => maybePrune(db);
+    } catch (e) { /* transient IDB error — tile stays in memory cache */ }
+  });
+}
+
+function idbGet(db, key) {
+  return new Promise((resolve) => {
+    try {
+      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).get(key);
+      req.onsuccess = () => resolve(req.result || null);
+      req.onerror = () => resolve(null);
+    } catch (e) { resolve(null); }
+  });
+}
+
+// Resolve misses from IndexedDB: each hit is promoted into the memory cache and
+// painted (if the view hasn't moved on); returns the descriptors still missing.
+async function hydrateFromDB(misses, gen) {
+  const db = await dbReady;
+  if (!db || misses.length === 0) return misses;
+  const still = [];
+  await Promise.all(misses.map(async (d) => {
+    const rec = await idbGet(db, d.key);
+    if (rec && rec.paramHash === paramHash) {
+      const t = {
+        key: rec.key,
+        iter: rec.iter instanceof Float32Array ? rec.iter : new Float32Array(rec.iter),
+        L: rec.L, ix: BigInt(rec.ix), iy: BigInt(rec.iy),
+        paramHash: rec.paramHash, ts: rec.ts,
+      };
+      cachePut(t);
+      if (gen === currentGen) { blitTile(d, t); hitCount++; computeCount--; }
+    } else {
+      still.push(d);
+    }
+  }));
+  return still;
+}
+
+let pruneBusy = false;
+function maybePrune(db) {
+  if (pruneBusy) return;
+  pruneBusy = true;
+  try {
+    const tx = db.transaction(DB_STORE, "readwrite");
+    const os = tx.objectStore(DB_STORE);
+    os.count().onsuccess = (e) => {
+      let excess = e.target.result - DB_MAX;
+      if (excess <= 0) return;
+      os.index("ts").openCursor().onsuccess = (ev) => { // oldest first
+        const c = ev.target.result;
+        if (c && excess > 0) { c.delete(); excess--; c.continue(); }
+      };
+    };
+    tx.oncomplete = tx.onerror = () => { pruneBusy = false; };
+  } catch (e) { pruneBusy = false; }
+}
+
+// ---- Painting a tile (and placeholders) onto the viewport ----
+// Colorize a cached tile's iteration values into the scratch canvas.
+function tileToScratch(t) {
+  const out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
+  colorizePixels(t.iter, TILE_PX * TILE_PX, renderParams, currentLut, out);
+  sctx.putImageData(new ImageData(out, TILE_PX, TILE_PX), 0, 0);
+  return scratch;
+}
+// Blit an exact tile to its viewport rect (+1 px overlap hides sub-pixel seams).
+function blitTile(d, t) {
+  const cnv = tileToScratch(t);
+  ctx.drawImage(cnv, 0, 0, TILE_PX, TILE_PX, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
+}
+// Until a tile is computed, upscale the nearest cached ancestor as a placeholder
+// (the instant blurry-zoom you get in map apps). Walk up to 8 levels.
+function blitPlaceholder(d) {
+  for (let k = 1; k <= 8 && d.L - k >= 0; k++) {
+    const ak = BigInt(k);
+    const at = cacheGet(tileKey(d.L - k, d.ix >> ak, d.iy >> ak));
+    if (!at) continue;
+    const mask = (1n << ak) - 1n;
+    const sub = TILE_PX / Math.pow(2, k);                 // ancestor sub-rect size
+    const sx = Number(d.ix & mask) * sub;                 // & gives floor-mod (BigInt 2's-comp)
+    const sy = Number(d.iy & mask) * sub;
+    const cnv = tileToScratch(at);
+    ctx.drawImage(cnv, sx, sy, sub, sub, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
+    return;
+  }
+  // No ancestor available: leave the existing backdrop (pan preview / prior frame).
+}
+
+// Build the set of tiles covering the current view, with their viewport rects.
+function coverTiles(p) {
+  const frac = state.frac;
+  const L = pickLevel(state.spanW, p.pxW);
+  const viewScale = state.spanW / p.pxW;               // world units per viewport px
+  const spanH = viewScale * p.pxH;
+  const halfWfp = fpFromDouble(state.spanW / 2, frac);
+  const halfHfp = fpFromDouble(spanH / 2, frac);
+  const rLeft = rootLeftFp(frac), rTop = rootTopFp(frac);
+  const span = tileSpanFp(L, frac);
+  const ixMin = floorDivBig((state.cx - halfWfp) - rLeft, span);
+  const ixMax = floorDivBig((state.cx + halfWfp) - rLeft, span);
+  const iyMin = floorDivBig(rTop - (state.cy + halfHfp), span);
+  const iyMax = floorDivBig(rTop - (state.cy - halfHfp), span);
+  const tileScale = (ROOT_SPAN / TILE_PX) * Math.pow(2, -L); // world units per tile px
+  const destSize = TILE_PX * tileScale / viewScale;          // ~TILE_PX (near 1:1)
+  const tiles = [];
+  for (let iy = iyMin; iy <= iyMax; iy++) {
+    for (let ix = ixMin; ix <= ixMax; ix++) {
+      // Offset of this tile's top-left from the view center, in small doubles
+      // (formed via fixed-point subtraction — never an absolute coordinate).
+      const odx = fpToDouble((rLeft + ix * span) - state.cx, frac);
+      const ody = fpToDouble(rTop - iy * span - state.cy, frac);
+      tiles.push({
+        L, ix, iy, key: tileKey(L, ix, iy),
+        odx, ody, tileScale, destSize,
+        destX: odx / viewScale + p.pxW / 2,
+        destY: p.pxH / 2 - ody / viewScale,
+      });
+    }
+  }
+  return { L, viewScale, tiles };
+}
+
+// Map iteration values -> RGBA. The smooth/continuous value is always stored;
+// non-smooth coloring just floors it. Pure post-processing, so it's cheap.
+function colorizePixels(iter, count, p, lut, out) {
+  const invMax = 1 / p.maxIter;
+  for (let i = 0; i < count; i++) {
+    let val = iter[i];
+    let r, g, b;
+    if (val < 0) { r = p.interior[0]; g = p.interior[1]; b = p.interior[2]; }
+    else {
+      if (!p.smooth) val = Math.floor(val);
+      let t = (val * invMax) * p.cycles + p.offset;
+      t = t - Math.floor(t);
+      const o = ((t * 255) | 0) * 3;
+      r = lut[o]; g = lut[o + 1]; b = lut[o + 2];
+    }
+    const j = i * 4;
+    out[j] = r; out[j + 1] = g; out[j + 2] = b; out[j + 3] = 255;
+  }
+}
+
+// Recolor the current view from cached tiles — no worker compute. Wired to
+// every palette control, so color edits are instant. The view is unchanged, so
+// tile positions (currentCover) and keys stay valid; only the colors differ.
+function repaint() {
+  if (!currentCover || !renderParams) return;
+  renderParams = readParams();
+  currentLut = buildPalette(activeStops());
+  for (const d of currentCover.tiles) {
+    const t = cacheGet(d.key);
+    if (t && t.paramHash === paramHash) blitTile(d, t);
+    else blitPlaceholder(d);
+  }
+}
 
 function initWorkers() {
   const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "application/javascript" }));
@@ -427,10 +670,16 @@ function pumpWorker(w) {
 }
 
 function onWorkerDone(w, data) {
-  if (data.gen === currentGen) {
-    // Paint this tile's result onto the canvas (progressive update).
-    const img = new ImageData(new Uint8ClampedArray(data.buf), data.tileW, data.tileH);
-    ctx.putImageData(img, data.x0, data.y0);
+  if (data.gen === currentGen && pendingKeys.has(data.key)) {
+    const d = pendingDesc.get(data.key);
+    const t = {
+      key: data.key, iter: new Float32Array(data.iter),
+      L: d.L, ix: d.ix, iy: d.iy, paramHash, ts: Date.now(),
+    };
+    cachePut(t);
+    persistTile(t);                 // write-through to IndexedDB (stage 3)
+    pendingKeys.delete(data.key);
+    blitTile(d, t);                 // paint over the placeholder
     pendingTiles--;
     if (pendingTiles === 0) finishRender();
   }
@@ -446,8 +695,10 @@ function finishRender() {
   const mode = p.power === 2
     ? `perturbation, ${state.frac}-bit ref`
     : "direct doubles (power≠2: no deep precision)";
+  const lvl = currentCover ? currentCover.L : "?";
   statusEl.textContent =
-    `Rendered ${p.pxW}×${p.pxH} in ${ms} ms · zoom ~1e${zoom} · ${mode} · ${NUM_WORKERS} workers.`;
+    `${coverCount} tiles (${hitCount} cached, ${computeCount} computed) · level ${lvl} · ` +
+    `${p.pxW}×${p.pxH} in ${ms} ms · zoom ~1e${zoom} · ${mode}`;
 }
 
 function render() {
@@ -461,61 +712,73 @@ function render() {
   if (canvas.height !== p.pxH) canvas.height = p.pxH;
 
   ensurePrecision();
-  const scale = state.spanW / p.pxW;          // units per pixel (square pixels)
-  const spanW = scale * p.pxW;
-  const spanH = scale * p.pxH;
   const centerXd = fpToDouble(state.cx, state.frac);
   const centerYd = fpToDouble(state.cy, state.frac);
   syncFieldsFromState();
 
-  const lut = buildPalette(activeStops());
+  renderParams = p;
+  paramHash = `${p.power}|${p.escapeR}|${p.maxIter}`;
+  currentLut = buildPalette(activeStops());
 
-  // High-precision reference orbit for perturbation (quadratic only).
-  const ref = p.power === 2
-    ? computeReferenceOrbit(state.cx, state.cy, state.frac, p.maxIter, p.escapeR)
-    : { Zx: null, Zy: null, refLen: 0 };
+  // Tiles covering the view. Cached ones paint immediately; misses get an
+  // upscaled-ancestor placeholder now and a worker job to compute the exact tile.
+  const cover = coverTiles(p);
+  currentCover = cover;
+  coverCount = cover.tiles.length;
 
-  // Invalidate any in-flight render; stale tile results will be ignored.
+  // Invalidate in-flight work; stale tile results are ignored (gen check).
   currentGen++;
   const gen = currentGen;
   jobQueue = [];
+  pendingKeys.clear();
+  pendingDesc.clear();
   pendingTiles = 0;
   renderStart = performance.now();
-  renderParams = p;
 
-  overlay.hidden = false;
-  statusEl.textContent = "";
+  const misses = [];
+  hitCount = 0;
+  for (const d of cover.tiles) {
+    const t = cacheGet(d.key);
+    if (t && t.paramHash === paramHash) { blitTile(d, t); hitCount++; }
+    else { blitPlaceholder(d); misses.push(d); }
+  }
+  computeCount = misses.length;
 
-  // Broadcast the reference orbit to every worker first (ordered before tiles).
+  // Try IndexedDB for the misses (async); whatever isn't there gets computed.
+  hydrateFromDB(misses, gen).then((stillMissing) => {
+    if (gen !== currentGen) return;     // view moved on while we awaited the DB
+    if (stillMissing.length === 0) { finishRender(); return; }
+    enqueueCompute(stillMissing, gen, p, centerXd, centerYd);
+  });
+
+  if (computeCount === 0) { overlay.hidden = true; finishRender(); }
+  else overlay.hidden = false;
+}
+
+// Compute the given missing tiles on the worker pool (perturbation reference is
+// shared across the batch — iteration values don't depend on which reference
+// produced them, so the view-center orbit serves every tile).
+function enqueueCompute(misses, gen, p, centerXd, centerYd) {
+  if (gen !== currentGen || misses.length === 0) return;
+  const ref = p.power === 2
+    ? computeReferenceOrbit(state.cx, state.cy, state.frac, p.maxIter, p.escapeR)
+    : { Zx: null, Zy: null, refLen: 0 };
   for (const w of workers) {
     w.postMessage({ type: "ref", gen, Zx: ref.Zx, Zy: ref.Zy, refLen: ref.refLen });
   }
-
-  const base = {
-    type: "tile", gen, power: p.power, scale,
-    left: centerXd - spanW / 2,
-    top: centerYd + spanH / 2,
-    refPxX: p.pxW / 2, refPxY: p.pxH / 2,
-    invMax: 1 / p.maxIter,
-    maxIter: p.maxIter, escapeR: p.escapeR, smooth: p.smooth,
-    cycles: p.cycles, offset: p.offset, interior: p.interior, lut,
-  };
-
-  // Enqueue every tile of every pass; FIFO order means all coarse tiles run
-  // before finer ones, so the full frame previews quickly then refines.
   let jobId = 0;
-  for (const step of PASSES) {
-    for (let y0 = 0; y0 < p.pxH; y0 += TILE) {
-      const tileH = Math.min(TILE, p.pxH - y0);
-      for (let x0 = 0; x0 < p.pxW; x0 += TILE) {
-        const tileW = Math.min(TILE, p.pxW - x0);
-        jobQueue.push(Object.assign({ jobId: jobId++, step, x0, y0, tileW, tileH }, base));
-        pendingTiles++;
-      }
-    }
+  for (const d of misses) {
+    pendingKeys.add(d.key);
+    pendingDesc.set(d.key, d);
+    pendingTiles++;
+    jobQueue.push({
+      type: "tile", gen, jobId: jobId++, key: d.key,
+      power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
+      tilePx: TILE_PX, tileScale: d.tileScale,
+      tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
+      left: centerXd + d.odx, top: centerYd + d.ody,       // fallback absolute origin
+    });
   }
-
-  // Hand work to any idle workers; busy ones pick up jobs as they report back.
   const idle = idleWorkers;
   idleWorkers = [];
   for (const w of idle) pumpWorker(w);
@@ -668,6 +931,7 @@ function renderStopList() {
     color.value = rgbToHex(stop.color);
     color.addEventListener("input", () => {
       customStops[i].color = hexToRgb(color.value);
+      repaint();
     });
 
     const range = document.createElement("input");
@@ -680,6 +944,7 @@ function renderStopList() {
     range.addEventListener("input", () => {
       customStops[i].pos = parseFloat(range.value);
       posLabel.textContent = customStops[i].pos.toFixed(2);
+      repaint();
     });
 
     const del = document.createElement("button");
@@ -690,6 +955,7 @@ function renderStopList() {
       if (customStops.length > 2) {
         customStops.splice(i, 1);
         renderStopList();
+        repaint();
       }
     });
 
@@ -701,11 +967,19 @@ function renderStopList() {
 els.addStop.addEventListener("click", () => {
   customStops.push({ pos: 1.0, color: [255, 255, 255] });
   renderStopList();
+  repaint();
 });
 
 els.palettePreset.addEventListener("change", () => {
   els.customStops.hidden = els.palettePreset.value !== "custom";
+  repaint();
 });
+
+// Pure-coloring controls recolor the cached frame instantly (no recompute).
+els.cycles.addEventListener("input", repaint);
+els.offset.addEventListener("input", repaint);
+els.smooth.addEventListener("change", repaint);
+els.interiorColor.addEventListener("input", repaint);
 
 // ---------- Init ----------
 initState();
