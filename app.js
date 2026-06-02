@@ -801,7 +801,7 @@ function spans() {
   return { spanW: state.spanW, spanH: state.spanW * pxH / pxW };
 }
 
-// Click-and-drag to pan; a plain click (no movement) re-centers.
+// Click-and-drag to pan; a plain click does nothing, a double-click re-centers.
 let drag = null;
 canvas.addEventListener("mousedown", (e) => {
   e.preventDefault();
@@ -834,32 +834,55 @@ window.addEventListener("mouseup", (e) => {
   drag = null;
   canvas.style.cursor = "";
 
+  // A plain click (no movement) does nothing — only a drag pans.
+  if (!d.moved) return;
+
   const { spanW, spanH } = spans();
-
-  if (!d.moved) {
-    // Treat as a click -> re-center on the cursor point (high precision).
-    const { fx, fy } = cursorFrac(e);
-    applyCenterDelta((fx - 0.5) * spanW, (0.5 - fy) * spanH);
-    render();
-    return;
-  }
-
   // Convert the pixel drag into a high-precision shift of the center.
   const rect = d.rect || canvas.getBoundingClientRect();
   applyCenterDelta(-(d.dx / rect.width) * spanW, (d.dy / rect.height) * spanH);
   render();
 });
 
-// Wheel over the fractal zooms; elsewhere it scrolls normally (e.g. controls).
+// Double-click smoothly re-centers the view on the cursor point (high precision).
+// span (and thus state.frac via neededFrac) is constant here, so we can interpolate
+// the BigInt center against the captured start without rescaling mid-flight.
+let recenterRaf = 0;
+canvas.addEventListener("dblclick", (e) => {
+  e.preventDefault();
+  const { spanW, spanH } = spans();
+  const { fx, fy } = cursorFrac(e);
+  const dxReal = (fx - 0.5) * spanW;
+  const dyReal = (0.5 - fy) * spanH;
+
+  if (recenterRaf) cancelAnimationFrame(recenterRaf);
+  const cx0 = state.cx, cy0 = state.cy, frac0 = state.frac;
+  const t0 = performance.now();
+  const DUR = 700;
+  const ease = (t) => (t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2);
+
+  const step = (now) => {
+    const lin = Math.min(1, (now - t0) / DUR);
+    const k = ease(lin);
+    state.cx = cx0 + fpFromDouble(dxReal * k, frac0);
+    state.cy = cy0 + fpFromDouble(dyReal * k, frac0);
+    render();
+    recenterRaf = lin < 1 ? requestAnimationFrame(step) : 0;
+  };
+  recenterRaf = requestAnimationFrame(step);
+});
+
+// Wheel over the fractal zooms; over a floating panel it scrolls that panel.
+// The canvas now fills the viewport, so a bounding-box test would catch the
+// panels too — exclude them by checking the event's actual target.
 window.addEventListener("wheel", (e) => {
+  if (e.target.closest(".controls, header")) return; // let the panel scroll
   const rect = canvas.getBoundingClientRect();
-  const overCanvas =
-    e.clientX >= rect.left && e.clientX <= rect.right &&
-    e.clientY >= rect.top && e.clientY <= rect.bottom;
-  if (!overCanvas) return; // let the default scroll happen
 
   e.preventDefault();
-  const factor = e.deltaY < 0 ? 0.7 : 1 / 0.7;
+  // Shift = fine control: a gentler per-notch ratio for precise zooming.
+  const step = e.shiftKey ? 0.92 : 0.7;
+  const factor = e.deltaY < 0 ? step : 1 / step;
   const fx = (e.clientX - rect.left) / rect.width;
   const fy = (e.clientY - rect.top) / rect.height;
   const { spanW, spanH } = spans();
@@ -982,6 +1005,16 @@ els.smooth.addEventListener("change", repaint);
 els.interiorColor.addEventListener("input", repaint);
 
 // ---------- Init ----------
+// Default the output size to the device's actual pixel resolution (clamped to the
+// input's 16..4096 range). Baked into DEFAULTS so Reset restores it too.
+(() => {
+  const dpr = window.devicePixelRatio || 1;
+  const clamp = (n) => Math.max(16, Math.min(4096, Math.round(n)));
+  DEFAULTS.pxW = clamp(screen.width * dpr);
+  DEFAULTS.pxH = clamp(screen.height * dpr);
+  els.pxW.value = DEFAULTS.pxW;
+  els.pxH.value = DEFAULTS.pxH;
+})();
 initState();
 initWorkers();
 renderStopList();
