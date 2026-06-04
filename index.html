@@ -19,6 +19,49 @@
       <p class="hint">Tip: double-click to re-center · drag to pan · scroll to zoom.</p>
     </section>
 
+    <aside class="info-panel" id="infoPanel">
+      <div class="info-head">
+        <span class="info-title">Tile engine</span>
+        <button type="button" id="infoToggle" class="ghost info-toggle" title="Collapse">–</button>
+      </div>
+      <div class="info-body" id="infoBody">
+        <section class="info-group">
+          <h4>Current view</h4>
+          <div class="info-row"><span>Tiles in view</span><b id="iCover">0</b></div>
+          <div class="info-row"><span>Pyramid level</span><b id="iLevel">0</b></div>
+          <div class="info-row"><span>Cached / computed</span><b id="iHits">0 / 0</b></div>
+          <div class="info-row"><span>Last render</span><b id="iRenderMs">–</b></div>
+        </section>
+
+        <section class="info-group">
+          <h4>Memory cache (LRU)</h4>
+          <div class="info-row"><span>Tiles held</span><b id="iMem">0 / 0</b></div>
+          <div class="info-bar"><i id="iMemBar"></i></div>
+          <div class="info-row sub"><span>≈ values RAM</span><b id="iMemMb">0 MB</b></div>
+        </section>
+
+        <section class="info-group">
+          <h4>Compute</h4>
+          <div class="info-row"><span>Workers busy</span><b id="iWorkers">0 / 0</b></div>
+          <div class="info-dots" id="iWorkerDots"></div>
+          <div class="info-row"><span>In flight</span><b id="iPending">0</b></div>
+          <div class="info-row"><span>Queued jobs</span><b id="iQueue">0</b></div>
+        </section>
+
+        <section class="info-group">
+          <h4>IndexedDB store</h4>
+          <div class="info-row"><span>Tiles stored</span><b id="iDb">–</b></div>
+          <div class="info-bar"><i id="iDbBar"></i></div>
+        </section>
+
+        <section class="info-group">
+          <h4>Session</h4>
+          <div class="info-row"><span>Generation</span><b id="iGen">0</b></div>
+          <div class="info-row"><span>Tiles computed</span><b id="iComputed">0</b></div>
+        </section>
+      </div>
+    </aside>
+
     <aside class="controls">
       <fieldset>
         <legend>Anchor point (center)</legend>

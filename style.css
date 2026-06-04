@@ -22,7 +22,7 @@ body {
 }
 
 /* Floating, frosted glass look shared by the header and controls panels. */
-header, .controls {
+header, .controls, .info-panel {
   position: fixed;
   z-index: 10;
   background: rgba(27, 31, 41, 0.62);
@@ -175,6 +175,86 @@ button.primary { background: var(--accent); color: #1a1300; border-color: var(--
 button.ghost { background: transparent; }
 
 .status { color: var(--muted); font-size: 0.8rem; min-height: 1em; margin: 0; }
+
+/* ---- Left-hand tile-engine telemetry panel ---- */
+.info-panel {
+  top: 96px;            /* clears the floating header above it */
+  left: 16px;
+  width: 232px;
+  padding: 10px 12px 12px;
+  font-size: 0.78rem;
+  max-height: calc(100vh - 112px - 48px); /* leave room for the bottom hint */
+  display: flex;
+  flex-direction: column;
+}
+.info-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.info-title {
+  color: var(--accent);
+  font-size: 0.78rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+.info-toggle { padding: 2px 9px; font-size: 0.95rem; line-height: 1; }
+.info-body {
+  margin-top: 10px;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+.info-panel.collapsed .info-body { display: none; }
+
+.info-group h4 {
+  margin: 0 0 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.info-row {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 2px 0;
+  color: var(--muted);
+}
+.info-row b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
+.info-row.sub { font-size: 0.72rem; opacity: 0.85; }
+
+/* Usage bars (memory LRU, IndexedDB) */
+.info-bar {
+  height: 5px;
+  margin: 4px 0 2px;
+  background: var(--panel-2);
+  border-radius: 999px;
+  overflow: hidden;
+}
+.info-bar i {
+  display: block;
+  height: 100%;
+  width: 0;
+  background: var(--accent);
+  border-radius: 999px;
+  transition: width 0.2s ease;
+}
+
+/* Worker activity dots: filled = busy, hollow = idle */
+.info-dots { display: flex; flex-wrap: wrap; gap: 5px; margin: 2px 0 4px; }
+.info-dots .dot {
+  width: 9px;
+  height: 9px;
+  border-radius: 50%;
+  border: 1px solid var(--accent);
+}
+.info-dots .dot.busy { background: var(--accent); box-shadow: 0 0 6px var(--accent); }
 
 .custom-stops { margin-top: 12px; border-top: 1px dashed var(--border); padding-top: 10px; }
 .stops-title { margin: 0 0 8px; font-size: 0.78rem; color: var(--muted); }

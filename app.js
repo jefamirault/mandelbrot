@@ -416,6 +416,7 @@ const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts 
 const pendingKeys = new Set();  // keys with an in-flight compute job
 const pendingDesc = new Map();  // key -> cover descriptor (where to paint the result)
 let coverCount = 0, hitCount = 0, computeCount = 0; // status-line instrumentation
+let sessionComputed = 0, lastRenderMs = 0;          // info-panel instrumentation
 
 // Scratch tile canvas: iteration values are colorized here, then drawImage()'d
 // (and resampled) onto the viewport. Reused to avoid per-tile allocation.
@@ -681,6 +682,7 @@ function onWorkerDone(w, data) {
     pendingKeys.delete(data.key);
     blitTile(d, t);                 // paint over the placeholder
     pendingTiles--;
+    sessionComputed++;
     if (pendingTiles === 0) finishRender();
   }
   // Keep the worker busy regardless of whether the result was stale.
@@ -690,6 +692,7 @@ function onWorkerDone(w, data) {
 function finishRender() {
   overlay.hidden = true;
   const ms = Math.round(performance.now() - renderStart);
+  lastRenderMs = ms;
   const p = renderParams;
   const zoom = Math.round(Math.log10(DEFAULTS.rectW / state.spanW));
   const mode = p.power === 2
@@ -753,6 +756,8 @@ function render() {
 
   if (computeCount === 0) { overlay.hidden = true; finishRender(); }
   else overlay.hidden = false;
+
+  updateInfoPanel();   // reflect the new cover/queue without waiting for the tick
 }
 
 // Compute the given missing tiles on the worker pool (perturbation reference is
@@ -1003,6 +1008,82 @@ els.cycles.addEventListener("input", repaint);
 els.offset.addEventListener("input", repaint);
 els.smooth.addEventListener("change", repaint);
 els.interiorColor.addEventListener("input", repaint);
+
+// ============================================================================
+// Tile-engine telemetry panel (left side). Reads the live cache/queue/worker
+// state; it's pure observation — nothing here feeds back into rendering. A light
+// polling tick covers the async churn (workers finishing, IDB write-through)
+// that has no single event to hang an update on.
+// ============================================================================
+const info = {
+  panel: $("infoPanel"), toggle: $("infoToggle"),
+  cover: $("iCover"), level: $("iLevel"), hits: $("iHits"), renderMs: $("iRenderMs"),
+  mem: $("iMem"), memBar: $("iMemBar"), memMb: $("iMemMb"),
+  workers: $("iWorkers"), workerDots: $("iWorkerDots"), pending: $("iPending"), queue: $("iQueue"),
+  db: $("iDb"), dbBar: $("iDbBar"),
+  gen: $("iGen"), computed: $("iComputed"),
+};
+
+// Float32 values per tile, in MB — the dominant memory cost of the LRU.
+const TILE_MB = (TILE_PX * TILE_PX * 4) / (1024 * 1024);
+
+// One worker dot per pool member; flagged busy when not parked in idleWorkers.
+for (let i = 0; i < NUM_WORKERS; i++) {
+  const d = document.createElement("span");
+  d.className = "dot";
+  info.workerDots.appendChild(d);
+}
+
+// IndexedDB row count, refreshed on a slow cadence (a full count per tick would
+// be wasteful and the number moves slowly). null = store unavailable.
+let dbTileCount = null;
+function refreshDbCount() {
+  dbReady.then((db) => {
+    if (!db) { dbTileCount = null; return; }
+    try {
+      const req = db.transaction(DB_STORE, "readonly").objectStore(DB_STORE).count();
+      req.onsuccess = () => { dbTileCount = req.result; };
+    } catch (e) { /* leave the last known value */ }
+  });
+}
+
+function updateInfoPanel() {
+  if (info.panel.classList.contains("collapsed")) return;
+  const busy = NUM_WORKERS - idleWorkers.length;
+
+  info.cover.textContent = coverCount;
+  info.level.textContent = currentCover ? currentCover.L : "–";
+  info.hits.textContent = `${hitCount} / ${computeCount}`;
+  info.renderMs.textContent = lastRenderMs ? `${lastRenderMs} ms` : "–";
+
+  info.mem.textContent = `${tileCache.size} / ${MAX_CACHE_TILES}`;
+  info.memBar.style.width = `${Math.min(100, (tileCache.size / MAX_CACHE_TILES) * 100)}%`;
+  info.memMb.textContent = `${(tileCache.size * TILE_MB).toFixed(1)} MB`;
+
+  info.workers.textContent = `${busy} / ${NUM_WORKERS}`;
+  const dots = info.workerDots.children;
+  for (let i = 0; i < dots.length; i++) dots[i].classList.toggle("busy", i < busy);
+  info.pending.textContent = pendingTiles;
+  info.queue.textContent = jobQueue.length;
+
+  info.db.textContent = dbTileCount === null ? "unavailable" : `${dbTileCount} / ${DB_MAX}`;
+  info.dbBar.style.width = dbTileCount === null ? "0%"
+    : `${Math.min(100, (dbTileCount / DB_MAX) * 100)}%`;
+
+  info.gen.textContent = currentGen;
+  info.computed.textContent = sessionComputed;
+}
+
+info.toggle.addEventListener("click", () => {
+  const collapsed = info.panel.classList.toggle("collapsed");
+  info.toggle.textContent = collapsed ? "+" : "–";
+  info.toggle.title = collapsed ? "Expand" : "Collapse";
+  if (!collapsed) updateInfoPanel();
+});
+
+setInterval(updateInfoPanel, 200);   // live churn (workers, IDB write-through)
+refreshDbCount();
+setInterval(refreshDbCount, 2000);
 
 // ---------- Init ----------
 // Default the output size to the device's actual pixel resolution (clamped to the
