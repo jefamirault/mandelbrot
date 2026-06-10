@@ -15,6 +15,9 @@
   <main>
     <section class="canvas-wrap">
       <canvas id="canvas" width="800" height="600"></canvas>
+      <!-- Transparent sibling stacked over #canvas (same size/object-fit, so tile
+           rects map identically). Holds the per-tile "computing" spinners. -->
+      <canvas id="loadCanvas" width="800" height="600"></canvas>
       <div class="overlay" id="overlay" hidden>Rendering&hellip;</div>
       <p class="hint">Tip: double-click to re-center · drag to pan · scroll to zoom.</p>
     </section>

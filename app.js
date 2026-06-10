@@ -7,6 +7,10 @@ const ctx = canvas.getContext("2d");
 const overlay = $("overlay");
 const statusEl = $("status");
 
+// Transparent layer over the canvas for per-tile "computing" spinners.
+const loadCanvas = $("loadCanvas");
+const loadCtx = loadCanvas.getContext("2d");
+
 // Offscreen buffer used to shift the rendered pixels during a pan drag.
 const buffer = document.createElement("canvas");
 const bctx = buffer.getContext("2d");
@@ -587,6 +591,42 @@ function blitPlaceholder(d) {
   // No ancestor available: leave the existing backdrop (pan preview / prior frame).
 }
 
+// ---- Per-tile "computing" spinner (on the separate loadCanvas layer) ----
+// A tile that's queued/in-flight shows a dim wash + a spinning arc over its rect
+// until the worker result paints the real pixels (which drops it from pendingKeys).
+let loadAnimRaf = 0;
+function drawTileSpinner(d, angle) {
+  const x = d.destX, y = d.destY, size = d.destSize;
+  const cx = x + size / 2, cy = y + size / 2;
+  const r = Math.max(7, Math.min(size * 0.16, 24));
+  const lw = Math.max(2, r * 0.24);
+  loadCtx.fillStyle = "rgba(0, 0, 0, 0.16)";
+  loadCtx.fillRect(x, y, size, size);
+  loadCtx.lineWidth = lw;
+  loadCtx.lineCap = "round";
+  loadCtx.strokeStyle = "rgba(255, 255, 255, 0.18)";   // full track ring
+  loadCtx.beginPath();
+  loadCtx.arc(cx, cy, r, 0, Math.PI * 2);
+  loadCtx.stroke();
+  loadCtx.strokeStyle = "rgba(255, 255, 255, 0.9)";    // spinning leading arc
+  loadCtx.beginPath();
+  loadCtx.arc(cx, cy, r, angle, angle + Math.PI * 0.6);
+  loadCtx.stroke();
+}
+function loadAnimTick(ts) {
+  loadCtx.clearRect(0, 0, loadCanvas.width, loadCanvas.height);
+  if (pendingKeys.size === 0) { loadAnimRaf = 0; return; }  // nothing left: stop
+  const angle = (ts / 1000) * Math.PI * 1.8;               // ~0.9 rev/s
+  for (const key of pendingKeys) {
+    const d = pendingDesc.get(key);
+    if (d) drawTileSpinner(d, angle);
+  }
+  loadAnimRaf = requestAnimationFrame(loadAnimTick);
+}
+function startLoadAnim() {
+  if (!loadAnimRaf) loadAnimRaf = requestAnimationFrame(loadAnimTick);
+}
+
 // Build the set of tiles covering the current view, with their viewport rects.
 function coverTiles(p) {
   const frac = state.frac;
@@ -713,6 +753,9 @@ function render() {
   els.pxH.value = p.pxH;
   if (canvas.width !== p.pxW) canvas.width = p.pxW;
   if (canvas.height !== p.pxH) canvas.height = p.pxH;
+  // Keep the spinner layer the same resolution so its coords match tile rects.
+  if (loadCanvas.width !== p.pxW) loadCanvas.width = p.pxW;
+  if (loadCanvas.height !== p.pxH) loadCanvas.height = p.pxH;
 
   ensurePrecision();
   const centerXd = fpToDouble(state.cx, state.frac);
@@ -787,6 +830,7 @@ function enqueueCompute(misses, gen, p, centerXd, centerYd) {
   const idle = idleWorkers;
   idleWorkers = [];
   for (const w of idle) pumpWorker(w);
+  startLoadAnim();   // spinners run until pendingKeys drains (worker results land)
 }
 
 // ---------- Interactions ----------

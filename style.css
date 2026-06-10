@@ -61,6 +61,19 @@ canvas {
   image-rendering: pixelated;
 }
 
+/* Loading-spinner layer: pinned directly over #canvas, same object-fit:cover
+   mapping (inherited from the `canvas` rule) so spinner rects line up with tiles.
+   Never grabs the cursor or pointer events — purely decorative. */
+#loadCanvas {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  pointer-events: none;
+  cursor: default;
+  background: transparent;
+  image-rendering: auto; /* smooth arcs even when cover-upscaled */
+}
+
 .overlay[hidden] { display: none; }
 .overlay {
   position: fixed;
