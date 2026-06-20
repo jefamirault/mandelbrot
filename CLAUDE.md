@@ -41,7 +41,14 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   = arithmetic + a Map lookup), not stored pointers — O(1) and no dangling refs on eviction.
 - Misses show an **upscaled nearest cached ancestor** as an instant placeholder
   (`blitPlaceholder`) — the maps-like blurry-zoom — replaced when the exact tile computes.
-  (This replaced the old `PASSES` subsample preview.)
+- **Progressive tile compute.** Each compute job renders in coarse→fine passes
+  (`PROGRESSIVE_PASSES = [8, 2, 1]`): the worker computes a strided subsample, block-replicates
+  it to fill the tile, posts it as a non-`final` frame, then refines. Strides each divide the
+  previous, so every pixel is computed exactly once across all passes and the `final` tile is
+  identical to a single full-res pass (only `final` results are cached). This covers the gap the
+  ancestor placeholder can't: a big wheel-zoom that jumps past every cached level, where you'd
+  otherwise watch a blank tile until it finished. `onWorkerDone` paints intermediate frames
+  (`blitValues`) but only caches/decrements/pumps the worker on `final`.
 - `currentGen` is a generation token. Every `render()` bumps it and clears `jobQueue` +
   `pendingKeys`; stale tile/IDB results (wrong `gen`) are discarded instead of painted.
 - `tileToScratch` colorizes a tile's values into the shared `scratch` canvas before each blit.

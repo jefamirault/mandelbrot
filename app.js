@@ -394,22 +394,40 @@ function renderTile(j) {
     return i + 1 - Math.log(logZn / lnEscape) / lnPow;
   }
 
-  let p = 0;
-  for (let ty = 0; ty < N; ty++) {
-    const fy = ty + 0.5;
-    for (let tx = 0; tx < N; tx++) {
-      const fx = tx + 0.5;
-      if (usePerturb) {
-        iter[p++] = perturb(odx + fx * tileScale, ody - fy * tileScale);
-      } else {
-        iter[p++] = iterate(left + fx * tileScale, top - fy * tileScale);
+  // Progressive refinement: compute a coarse subsample first (block-replicated so
+  // the tile already looks complete), then fill in finer grids. Each stride
+  // divides the previous, so the skip test computes every pixel exactly once
+  // across all passes (no redundant work) — the final tile is identical to a
+  // single full-res pass. The intermediate frames give an instant low-res preview
+  // for the case the cheap ancestor placeholder can't cover: a big wheel-zoom that
+  // jumps past every cached level, where otherwise you'd stare at a blank tile.
+  const passes = (j.passes && j.passes.length) ? j.passes : [1];
+  const sample = usePerturb
+    ? (fx, fy) => perturb(odx + fx * tileScale, ody - fy * tileScale)
+    : (fx, fy) => iterate(left + fx * tileScale, top - fy * tileScale);
+  let prev = 0;
+  for (let pi = 0; pi < passes.length; pi++) {
+    const s = passes[pi];
+    for (let ty = 0; ty < N; ty += s) {
+      for (let tx = 0; tx < N; tx += s) {
+        if (prev && tx % prev === 0 && ty % prev === 0) continue;  // done in a coarser pass
+        const v = sample(tx + 0.5, ty + 0.5);
+        const yEnd = ty + s < N ? ty + s : N, xEnd = tx + s < N ? tx + s : N;
+        for (let by = ty; by < yEnd; by++) {
+          const row = by * N;
+          for (let bx = tx; bx < xEnd; bx++) iter[row + bx] = v;  // block-replicate
+        }
       }
     }
+    prev = s;
+    if (pi === passes.length - 1) {
+      self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer, final: true }, [iter.buffer]);
+    } else {
+      // Intermediate frame: send a copy so the worker keeps refining its buffer.
+      const copy = new Float32Array(iter);
+      self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: copy.buffer, final: false }, [copy.buffer]);
+    }
   }
-  self.postMessage(
-    { jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer },
-    [iter.buffer]
-  );
 }
 `;
 
@@ -448,6 +466,11 @@ let currentLut = null;
 const TILE_PX = 256;            // pyramid tile resolution (px per side)
 const ROOT_SPAN = 4;            // world span of level 0 (contains the whole set)
 const MAX_CACHE_TILES = 384;    // in-memory LRU bound (~100 MB of Float32 values)
+// Progressive tile passes: coarse subsample → finer, painted as they arrive so a
+// deep wheel-zoom shows a blocky preview within a few ms instead of a blank tile.
+// Strides must each divide the previous (so no pixel is computed twice); the last
+// must be 1 (the exact full-res pass that gets cached).
+const PROGRESSIVE_PASSES = [8, 2, 1];
 
 let paramHash = "";             // tiles are only reusable within the same iter params
 let currentCover = null;        // tiles covering the current view (for repaint)
@@ -598,17 +621,20 @@ function maybePrune(db) {
 
 // ---- Painting a tile (and placeholders) onto the viewport ----
 // Colorize a cached tile's iteration values into the scratch canvas.
-function tileToScratch(t) {
+function colorizeToScratch(iter) {
   const out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
-  colorizePixels(t.iter, TILE_PX * TILE_PX, renderParams, currentLut, out);
+  colorizePixels(iter, TILE_PX * TILE_PX, renderParams, currentLut, out);
   sctx.putImageData(new ImageData(out, TILE_PX, TILE_PX), 0, 0);
   return scratch;
 }
-// Blit an exact tile to its viewport rect (+1 px overlap hides sub-pixel seams).
-function blitTile(d, t) {
-  const cnv = tileToScratch(t);
+function tileToScratch(t) { return colorizeToScratch(t.iter); }
+// Blit a tile's iteration values to its viewport rect (+1 px overlap hides
+// sub-pixel seams). Used for finished tiles and progressive intermediate frames.
+function blitValues(d, iter) {
+  const cnv = colorizeToScratch(iter);
   ctx.drawImage(cnv, 0, 0, TILE_PX, TILE_PX, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
 }
+function blitTile(d, t) { blitValues(d, t.iter); }
 // Until a tile is computed, upscale the nearest cached ancestor as a placeholder
 // (the instant blurry-zoom you get in map apps). Walk up to 8 levels.
 function blitPlaceholder(d) {
@@ -762,6 +788,15 @@ function pumpWorker(w) {
 }
 
 function onWorkerDone(w, data) {
+  // Progressive intermediate frame: the worker is still refining this tile, so
+  // just paint the coarse preview if it's still current — don't cache and don't
+  // pump (the worker isn't free until the final pass).
+  if (!data.final) {
+    if (data.gen === currentGen && pendingKeys.has(data.key)) {
+      blitValues(pendingDesc.get(data.key), new Float32Array(data.iter));
+    }
+    return;
+  }
   if (data.gen === currentGen && pendingKeys.has(data.key)) {
     const d = pendingDesc.get(data.key);
     const t = {
@@ -776,7 +811,7 @@ function onWorkerDone(w, data) {
     sessionComputed++;
     if (pendingTiles === 0) finishRender();
   }
-  // Keep the worker busy regardless of whether the result was stale.
+  // Keep the worker busy regardless of whether the final result was stale.
   pumpWorker(w);
 }
 
@@ -874,7 +909,7 @@ function enqueueCompute(misses, gen, p, centerXd, centerYd) {
     jobQueue.push({
       type: "tile", gen, jobId: jobId++, key: d.key,
       power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
-      tilePx: TILE_PX, tileScale: d.tileScale,
+      tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES,
       tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
       left: centerXd + d.odx, top: centerYd + d.ody,       // fallback absolute origin
     });
