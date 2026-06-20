@@ -102,6 +102,25 @@ canvas {
 }
 @keyframes spin { to { transform: rotate(360deg); } }
 
+/* Zoom factor, parked top-right just left of the controls panel (320px + 16px). */
+.zoom-badge {
+  position: fixed;
+  top: 16px;
+  right: 348px;
+  z-index: 5;
+  padding: 7px 13px;
+  color: var(--text);
+  font-size: 0.85rem;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  background: rgba(27, 31, 41, 0.62);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  pointer-events: none;
+}
+
 .hint {
   position: fixed;
   bottom: 16px;
@@ -189,6 +208,21 @@ button.ghost { background: transparent; }
 
 .status { color: var(--muted); font-size: 0.8rem; min-height: 1em; margin: 0; }
 
+/* Saved viewpoints: a "go there" label + a delete button per row. */
+.bookmark-list { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.bookmark-list:empty { display: none; }
+.bookmark-row { display: flex; align-items: center; gap: 8px; }
+.bookmark-row .go {
+  flex: 1;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.bookmark-row .go .zoom { color: var(--muted); font-variant-numeric: tabular-nums; }
+.bookmark-row .del { padding: 4px 9px; font-size: 0.8rem; line-height: 1; color: var(--muted); }
+.bookmark-row .del:hover { border-color: var(--accent); color: var(--text); }
+
 /* ---- Left-hand tile-engine telemetry panel ---- */
 .info-panel {
   top: 96px;            /* clears the floating header above it */
@@ -241,6 +275,16 @@ button.ghost { background: transparent; }
 }
 .info-row b { color: var(--text); font-variant-numeric: tabular-nums; font-weight: 600; }
 .info-row.sub { font-size: 0.72rem; opacity: 0.85; }
+/* Editable caps live inline in a row — narrow, right-aligned, tabular. */
+.info-input {
+  width: 5.5em;
+  flex: 0 0 auto;
+  padding: 3px 6px;
+  font-size: 0.8rem;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.info-btn { width: 100%; margin-top: 8px; padding: 6px 10px; font-size: 0.78rem; }
 
 /* Usage bars (memory LRU, IndexedDB) */
 .info-bar {

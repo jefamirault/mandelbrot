@@ -1,11 +1,37 @@
 "use strict";
 
+// ---------- Persisted settings (localStorage; degrades to defaults if blocked) ----------
+const SETTINGS_KEY = "mandelbrot-settings";
+const SETTINGS = (() => {
+  try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; }
+  catch (e) { return {}; }
+})();
+function saveSetting(key, value) {
+  SETTINGS[key] = value;
+  try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(SETTINGS)); }
+  catch (e) { /* storage blocked (some file:// origins) → session-only */ }
+}
+
 // ---------- DOM ----------
 const $ = (id) => document.getElementById(id);
 const canvas = $("canvas");
 const ctx = canvas.getContext("2d");
 const overlay = $("overlay");
 const statusEl = $("status");
+const zoomBadge = $("zoomBadge");
+
+// Zoom factor relative to the default view (DEFAULTS.rectW spans the whole set = 1x).
+// Compact formatting: fixed decimals while shallow, scientific once it blows past 1e6.
+function formatZoom(z) {
+  if (z >= 1e6)      return z.toExponential(1).replace("e+", "e");
+  if (z >= 100)      return Math.round(z).toLocaleString();
+  // Trailing zeros trimmed via +(): 1.00→1, 2.50→2.5, 1.23→1.23.
+  if (z >= 10)       return String(+z.toFixed(1));
+  return String(+z.toFixed(2));
+}
+function updateZoomBadge() {
+  zoomBadge.textContent = `Zoom: ${formatZoom(DEFAULTS.rectW / state.spanW)}x`;
+}
 
 // Transparent layer over the canvas for per-tile "computing" spinners.
 const loadCanvas = $("loadCanvas");
@@ -388,7 +414,16 @@ function renderTile(j) {
 `;
 
 // ---------- Worker pool ----------
-const NUM_WORKERS = Math.max(2, Math.min(8, navigator.hardwareConcurrency || 4));
+// hardwareConcurrency reports logical *threads* (e.g. 32 on a 24-core/32-thread
+// hybrid CPU), not physical cores. Default to all-but-one — leave a thread for
+// the UI and the main-thread reference orbit — capped at 32. Tile compute is
+// CPU-bound, so the optimum is roughly the core count and best found empirically
+// (hyperthreads and E-cores scale sublinearly), hence the panel control.
+const MAX_WORKERS = 64;
+// Persisted choice wins; otherwise the smart default (all-but-one, capped at 32).
+let NUM_WORKERS = SETTINGS.workers != null
+  ? Math.max(1, Math.min(MAX_WORKERS, SETTINGS.workers))
+  : Math.max(2, Math.min(32, (navigator.hardwareConcurrency || 4) - 1));
 
 let workers = [];
 let idleWorkers = [];
@@ -473,7 +508,8 @@ function cachePut(t) {
 // indices (as strings) structured-clone cleanly. Degrades to memory-only if the
 // store can't be opened (some file:// configurations).
 // ============================================================================
-const DB_NAME = "mandelbrot-tiles", DB_STORE = "tiles", DB_MAX = 1500;
+const DB_NAME = "mandelbrot-tiles", DB_STORE = "tiles";
+let DB_MAX = SETTINGS.dbMax != null ? Math.max(1, SETTINGS.dbMax) : 1500;  // IndexedDB prune target; editable + persisted
 // Always resolves (to the db, or null for memory-only) — never rejects, so the
 // await in hydrateFromDB can't throw if indexedDB is missing/blocked (the open
 // call itself can throw synchronously on some file:// origins).
@@ -695,14 +731,29 @@ function repaint() {
   }
 }
 
+let workerUrl = null;   // Blob URL for WORKER_SRC, built once and reused across rebuilds.
 function initWorkers() {
-  const url = URL.createObjectURL(new Blob([WORKER_SRC], { type: "application/javascript" }));
+  if (!workerUrl) workerUrl = URL.createObjectURL(new Blob([WORKER_SRC], { type: "application/javascript" }));
   for (let i = 0; i < NUM_WORKERS; i++) {
-    const w = new Worker(url);
+    const w = new Worker(workerUrl);
     w.onmessage = (e) => onWorkerDone(w, e.data);
     workers.push(w);
     idleWorkers.push(w);
   }
+}
+
+// Resize the pool. Terminating discards any in-flight tiles, so we re-render:
+// render() bumps the generation and clears the job/pending queues, cleanly
+// recomputing the current view on the freshly-sized pool.
+function setWorkerCount(n) {
+  n = Math.max(1, Math.min(MAX_WORKERS, Math.round(n) || NUM_WORKERS));
+  NUM_WORKERS = n;
+  for (const w of workers) w.terminate();
+  workers = [];
+  idleWorkers = [];
+  initWorkers();
+  buildWorkerDots();
+  render();
 }
 
 function pumpWorker(w) {
@@ -761,6 +812,7 @@ function render() {
   const centerXd = fpToDouble(state.cx, state.frac);
   const centerYd = fpToDouble(state.cy, state.frac);
   syncFieldsFromState();
+  updateZoomBadge();
 
   renderParams = p;
   paramHash = `${p.power}|${p.escapeR}|${p.maxIter}`;
@@ -966,6 +1018,95 @@ $("resetBtn").addEventListener("click", () => {
   render();
 });
 
+// ---------- Bookmarks (saved location + zoom) ----------
+// Persisted to localStorage. The center is stored losslessly as the BigInt
+// fixed-point value (as a string) plus its frac bits; spanW is a plain double.
+// cxStr/cyStr/zoom are display-only, snapshotted at save time for the label.
+const BOOKMARK_KEY = "mandelbrot-bookmarks";
+let bookmarks = loadBookmarks();
+
+function loadBookmarks() {
+  try { return JSON.parse(localStorage.getItem(BOOKMARK_KEY)) || []; }
+  catch (e) { return []; }
+}
+function saveBookmarks() {
+  try { localStorage.setItem(BOOKMARK_KEY, JSON.stringify(bookmarks)); }
+  catch (e) { /* storage blocked (some file:// origins) → session-only */ }
+}
+
+function gotoBookmark(b) {
+  state.frac = b.frac;
+  state.cx = BigInt(b.cx);
+  state.cy = BigInt(b.cy);
+  state.spanW = b.spanW;
+  // Restore the render recipe. Older bookmarks predate these fields, so each is
+  // applied only if present (missing → keep the current setting).
+  if (b.maxIter != null) els.maxIter.value = b.maxIter;
+  if (b.escapeR != null) els.escapeR.value = b.escapeR;
+  if (b.power != null) els.power.value = b.power;
+  if (b.preset != null) els.palettePreset.value = b.preset;
+  if (b.cycles != null) els.cycles.value = b.cycles;
+  if (b.offset != null) els.offset.value = b.offset;
+  if (b.smooth != null) els.smooth.checked = b.smooth;
+  if (b.interior != null) els.interiorColor.value = b.interior;
+  if (b.stops) {
+    customStops = b.stops.map((s) => ({ pos: s.pos, color: s.color.slice() }));
+    renderStopList();
+  }
+  els.customStops.hidden = els.palettePreset.value !== "custom";
+  ensurePrecision();
+  render();
+}
+
+function renderBookmarks() {
+  const list = $("bookmarkList");
+  list.innerHTML = "";
+  bookmarks.forEach((b, i) => {
+    const row = document.createElement("div");
+    row.className = "bookmark-row";
+
+    const go = document.createElement("button");
+    go.type = "button";
+    go.className = "go";
+    go.title = `${b.cxStr}, ${b.cyStr}`;
+    go.innerHTML = `<span class="zoom">${b.zoom}x</span> ${b.cxStr}, ${b.cyStr}`;
+    go.addEventListener("click", () => gotoBookmark(b));
+
+    const del = document.createElement("button");
+    del.type = "button";
+    del.className = "del";
+    del.textContent = "✕";
+    del.title = "Delete bookmark";
+    del.addEventListener("click", () => {
+      bookmarks.splice(i, 1);
+      saveBookmarks();
+      renderBookmarks();
+    });
+
+    row.append(go, del);
+    list.append(row);
+  });
+}
+
+$("bookmarkBtn").addEventListener("click", () => {
+  bookmarks.push({
+    cx: state.cx.toString(), cy: state.cy.toString(),
+    frac: state.frac, spanW: state.spanW,
+    cxStr: els.centerX.value, cyStr: els.centerY.value,
+    zoom: formatZoom(DEFAULTS.rectW / state.spanW),
+    // Full render recipe: iteration params + every color setting (custom stops
+    // are deep-copied so later edits to the live array don't mutate the saved one).
+    maxIter: els.maxIter.value, escapeR: els.escapeR.value, power: els.power.value,
+    preset: els.palettePreset.value, cycles: els.cycles.value, offset: els.offset.value,
+    smooth: els.smooth.checked, interior: els.interiorColor.value,
+    stops: customStops.map((s) => ({ pos: s.pos, color: s.color.slice() })),
+  });
+  saveBookmarks();
+  renderBookmarks();
+});
+
+renderBookmarks();
+
 // Editing the center fields updates the high-precision state. Bump precision
 // to hold however many digits were typed/pasted (deep coordinates survive).
 function setCenterFromField(which, str) {
@@ -1063,8 +1204,9 @@ const info = {
   panel: $("infoPanel"), toggle: $("infoToggle"),
   cover: $("iCover"), level: $("iLevel"), hits: $("iHits"), renderMs: $("iRenderMs"),
   mem: $("iMem"), memBar: $("iMemBar"), memMb: $("iMemMb"),
-  workers: $("iWorkers"), workerDots: $("iWorkerDots"), pending: $("iPending"), queue: $("iQueue"),
-  db: $("iDb"), dbBar: $("iDbBar"),
+  workers: $("iWorkers"), workerDots: $("iWorkerDots"), workersMax: $("iWorkersMax"),
+  pending: $("iPending"), queue: $("iQueue"),
+  db: $("iDb"), dbBar: $("iDbBar"), dbMax: $("iDbMax"), dbClear: $("iDbClear"),
   gen: $("iGen"), computed: $("iComputed"),
 };
 
@@ -1072,11 +1214,15 @@ const info = {
 const TILE_MB = (TILE_PX * TILE_PX * 4) / (1024 * 1024);
 
 // One worker dot per pool member; flagged busy when not parked in idleWorkers.
-for (let i = 0; i < NUM_WORKERS; i++) {
-  const d = document.createElement("span");
-  d.className = "dot";
-  info.workerDots.appendChild(d);
+function buildWorkerDots() {
+  info.workerDots.innerHTML = "";
+  for (let i = 0; i < NUM_WORKERS; i++) {
+    const d = document.createElement("span");
+    d.className = "dot";
+    info.workerDots.appendChild(d);
+  }
 }
+buildWorkerDots();
 
 // IndexedDB row count, refreshed on a slow cadence (a full count per tick would
 // be wasteful and the number moves slowly). null = store unavailable.
@@ -1117,6 +1263,38 @@ function updateInfoPanel() {
   info.gen.textContent = currentGen;
   info.computed.textContent = sessionComputed;
 }
+
+// ---- Editable, persisted controls ----
+// Seed the inputs from the live values, then push edits back into the settings,
+// persist them, and enforce immediately. (Tiles-held is a fixed constant.)
+info.dbMax.value = DB_MAX;
+info.workersMax.value = NUM_WORKERS;
+// Resizing rebuilds the pool and re-renders the current view on it.
+info.workersMax.addEventListener("change", () => {
+  const v = Math.max(1, Math.min(MAX_WORKERS, Math.round(+info.workersMax.value) || NUM_WORKERS));
+  info.workersMax.value = v;
+  saveSetting("workers", v);
+  if (v !== NUM_WORKERS) setWorkerCount(v);
+});
+info.dbMax.addEventListener("change", () => {
+  const v = Math.max(1, Math.round(+info.dbMax.value) || DB_MAX);
+  DB_MAX = v;
+  info.dbMax.value = v;
+  saveSetting("dbMax", v);
+  dbReady.then((db) => { if (db) maybePrune(db); });   // lowering it kicks off a prune
+});
+// Wipe the durable store. The in-memory LRU is untouched (still painting the
+// current view); only the reload-survival backing copy is dropped.
+info.dbClear.addEventListener("click", () => {
+  dbReady.then((db) => {
+    if (!db) return;
+    try {
+      const tx = db.transaction(DB_STORE, "readwrite");
+      tx.objectStore(DB_STORE).clear();
+      tx.oncomplete = () => { dbTileCount = 0; updateInfoPanel(); };
+    } catch (e) { /* store unavailable — nothing to clear */ }
+  });
+});
 
 info.toggle.addEventListener("click", () => {
   const collapsed = info.panel.classList.toggle("collapsed");

@@ -19,6 +19,7 @@
            rects map identically). Holds the per-tile "computing" spinners. -->
       <canvas id="loadCanvas" width="800" height="600"></canvas>
       <div class="overlay" id="overlay" hidden>Rendering&hellip;</div>
+      <div class="zoom-badge" id="zoomBadge">Zoom: 1x</div>
       <p class="hint">Tip: double-click to re-center · drag to pan · scroll to zoom.</p>
     </section>
 
@@ -47,6 +48,9 @@
           <h4>Compute</h4>
           <div class="info-row"><span>Workers busy</span><b id="iWorkers">0 / 0</b></div>
           <div class="info-dots" id="iWorkerDots"></div>
+          <div class="info-row"><span>Worker count</span>
+            <input type="number" id="iWorkersMax" class="info-input" min="1" max="64" step="1" />
+          </div>
           <div class="info-row"><span>In flight</span><b id="iPending">0</b></div>
           <div class="info-row"><span>Queued jobs</span><b id="iQueue">0</b></div>
         </section>
@@ -55,6 +59,10 @@
           <h4>IndexedDB store</h4>
           <div class="info-row"><span>Tiles stored</span><b id="iDb">–</b></div>
           <div class="info-bar"><i id="iDbBar"></i></div>
+          <div class="info-row"><span>Max stored</span>
+            <input type="number" id="iDbMax" class="info-input" min="1" step="1" />
+          </div>
+          <button type="button" id="iDbClear" class="ghost info-btn">Clear stored tiles</button>
         </section>
 
         <section class="info-group">
@@ -139,6 +147,12 @@
           <div id="stopList"></div>
           <button type="button" id="addStop" class="ghost">+ Add stop</button>
         </div>
+      </fieldset>
+
+      <fieldset>
+        <legend>Bookmarks</legend>
+        <button type="button" id="bookmarkBtn" class="ghost">+ Bookmark this view</button>
+        <div id="bookmarkList" class="bookmark-list"></div>
       </fieldset>
 
       <div class="actions">
