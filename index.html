@@ -15,12 +15,17 @@
   <main>
     <section class="canvas-wrap">
       <canvas id="canvas" width="800" height="600"></canvas>
-      <!-- Transparent sibling stacked over #canvas (same size/object-fit, so tile
-           rects map identically). Holds the per-tile "computing" spinners. -->
+      <!-- Transparent siblings stacked over #canvas (same size/object-fit, so tile
+           rects map identically). exploreCanvas: painted-descendant look-ahead
+           markers. loadCanvas: per-tile "computing" spinners + brush hover. -->
+      <canvas id="exploreCanvas" width="800" height="600"></canvas>
       <canvas id="loadCanvas" width="800" height="600"></canvas>
       <div class="overlay" id="overlay" hidden>Rendering&hellip;</div>
       <div class="zoom-badge" id="zoomBadge">Zoom: 1x</div>
-      <p class="hint">Tip: double-click to re-center · drag to pan · scroll to zoom.</p>
+      <!-- Marks the exact view center: the wheel-zoom anchor, and what
+           auto-paint reveals when enabled. Always visible. -->
+      <div class="reticle" id="reticle"></div>
+      <p class="hint">Click or drag to paint tiles (shared with everyone) · right-drag, space+drag, or arrows/WASD to pan · scroll to zoom · double-click to re-center.</p>
     </section>
 
     <aside class="info-panel" id="infoPanel">
@@ -63,6 +68,13 @@
             <input type="number" id="iDbMax" class="info-input" min="1" step="1" />
           </div>
           <button type="button" id="iDbClear" class="ghost info-btn">Clear stored tiles</button>
+        </section>
+
+        <section class="info-group">
+          <h4>Shared painting</h4>
+          <div class="info-row"><span>Sync</span><b id="iSync">–</b></div>
+          <div class="info-row"><span>Painted tiles</span><b id="iPainted">0</b></div>
+          <div class="info-row"><span>Explored in view</span><b id="iExplored">0 / 0</b></div>
         </section>
 
         <section class="info-group">
@@ -114,6 +126,13 @@
         </label>
         <label>Divergence rate (exponent d in z&rarr;z<sup>d</sup>+c)
           <input type="number" id="power" value="2" step="any" />
+        </label>
+      </fieldset>
+
+      <fieldset>
+        <legend>Painting</legend>
+        <label class="check">
+          <input type="checkbox" id="autoPaintCenter" checked /> Auto-paint center tile
         </label>
       </fieldset>
 

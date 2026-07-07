@@ -24,7 +24,11 @@ DOMAIN="${DEPLOY_DOMAIN:?DEPLOY_DOMAIN not set in .env}"
 
 # Only the files the site actually serves. Anything not listed here never
 # reaches the server, so CLAUDE.md / .git / deploy.sh stay local.
-FILES=(index.html app.js style.css)
+# server.js is the shared painted-tile API: run it on the box (e.g. a systemd
+# unit running `node server.js 8000` in $DEST) and add to the nginx site:
+#   location /api/ { proxy_pass http://127.0.0.1:8000; }
+# Without it the site still works, but painting stays per-browser (local only).
+FILES=(index.html app.js style.css server.js)
 
 # Verify the payload exists before we touch the network.
 for f in "${FILES[@]}"; do

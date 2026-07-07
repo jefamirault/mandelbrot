@@ -37,6 +37,11 @@ function updateZoomBadge() {
 const loadCanvas = $("loadCanvas");
 const loadCtx = loadCanvas.getContext("2d");
 
+// Transparent layer for the painted-descendant look-ahead markers (under the
+// spinner layer, over the fractal).
+const exploreCanvas = $("exploreCanvas");
+const exploreCtx = exploreCanvas.getContext("2d");
+
 // Offscreen buffer used to shift the rendered pixels during a pan drag.
 const buffer = document.createElement("canvas");
 const bctx = buffer.getContext("2d");
@@ -49,7 +54,13 @@ const els = {
   palettePreset: $("palettePreset"), cycles: $("cycles"), offset: $("offset"),
   smooth: $("smooth"), interiorColor: $("interiorColor"),
   customStops: $("customStops"), stopList: $("stopList"), addStop: $("addStop"),
+  autoPaint: $("autoPaintCenter"),
 };
+
+// Auto-paint the tile under the center reticle on every settled view change.
+// Persisted. (The reticle stays visible regardless — it marks the view center
+// and wheel-zoom anchor, not just the paint target.)
+let autoPaintCenter = SETTINGS.autoPaintCenter != null ? !!SETTINGS.autoPaintCenter : true;
 
 const DEFAULTS = {
   centerX: -0.5, centerY: 0, rectW: 3.5, rectH: 2.625,
@@ -477,7 +488,8 @@ let currentCover = null;        // tiles covering the current view (for repaint)
 const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts }
 const pendingKeys = new Set();  // keys with an in-flight compute job
 const pendingDesc = new Map();  // key -> cover descriptor (where to paint the result)
-let coverCount = 0, hitCount = 0, computeCount = 0; // status-line instrumentation
+let coverCount = 0, hitCount = 0, computeCount = 0, unexploredCount = 0; // status-line instrumentation
+let lastCenter = { x: 0, y: 0 };   // view center as doubles, for late (paint-time) enqueues
 let sessionComputed = 0, lastRenderMs = 0;          // info-panel instrumentation
 
 // Scratch tile canvas: iteration values are colorized here, then drawImage()'d
@@ -619,6 +631,98 @@ function maybePrune(db) {
   } catch (e) { pruneBusy = false; }
 }
 
+// ============================================================================
+// Painted-tile set ("fog of war", shared by all users)
+// ----------------------------------------------------------------------------
+// Tiles are only *computed* once painted (clicked). Painted keys are plain
+// "L:ix:iy" — no paramHash, painting is a property of the *place*, so a tile
+// stays revealed across iteration-parameter changes. The set syncs through a
+// tiny same-origin API (see server.js): POST pushes local paints, a polled GET
+// with a `since` cursor pulls everyone else's. Degrades to a local-only set
+// (localStorage) when the API is unreachable (file://, static-only hosting).
+// ============================================================================
+const PAINTED_KEY = "mandelbrot-painted";
+const PAINTED_PERSIST_MAX = 20000;  // localStorage cap (deep-zoom keys are long)
+const painted = new Set();
+let paintedList = [];               // insertion order, for capped persistence
+let paintedSeq = 0;                 // server sync cursor (next index to fetch)
+const API_OK = location.protocol !== "file:";
+let syncStatus = API_OK ? "connecting…" : "local (file://)";
+let pushQueue = [];                 // locally painted keys not yet POSTed
+let pushTimer = 0;
+
+const paintedKeyOf = (d) => `${d.L}:${d.ix}:${d.iy}`;
+function addPainted(key) {
+  if (painted.has(key)) return false;
+  painted.add(key);
+  paintedList.push(key);
+  return true;
+}
+(() => {
+  try {
+    const s = JSON.parse(localStorage.getItem(PAINTED_KEY));
+    if (s && Array.isArray(s.keys)) {
+      for (const k of s.keys) addPainted(k);
+      paintedSeq = s.seq || 0;
+    }
+  } catch (e) { /* fresh start */ }
+})();
+function savePainted() {
+  try {
+    // If the cap dropped old keys, reset the cursor so the next session
+    // re-fetches the full set from the server (the source of truth).
+    const capped = paintedList.length > PAINTED_PERSIST_MAX;
+    localStorage.setItem(PAINTED_KEY, JSON.stringify({
+      seq: capped ? 0 : paintedSeq,
+      keys: paintedList.slice(-PAINTED_PERSIST_MAX),
+    }));
+  } catch (e) { /* storage blocked (some file:// origins) → session-only */ }
+}
+
+// Push local paints in small batches (a stroke paints many tiles quickly).
+function schedulePush(key) {
+  pushQueue.push(key);
+  if (API_OK && !pushTimer) pushTimer = setTimeout(flushPush, 400);
+}
+async function flushPush() {
+  pushTimer = 0;
+  if (pushQueue.length === 0) return;
+  const batch = pushQueue;
+  pushQueue = [];
+  try {
+    const res = await fetch("api/painted", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ keys: batch }),
+    });
+    if (!res.ok) throw new Error(String(res.status));
+    syncStatus = "connected";
+  } catch (e) {
+    pushQueue = batch.concat(pushQueue);  // retried by the next poll tick
+    syncStatus = "local only";
+  }
+}
+async function pollPainted() {
+  if (!API_OK) return;
+  try {
+    const res = await fetch(`api/painted?since=${paintedSeq}`);
+    if (!res.ok) throw new Error(String(res.status));
+    const data = await res.json();
+    syncStatus = "connected";
+    const fresh = new Set();
+    for (const k of data.keys || []) if (typeof k === "string" && addPainted(k)) fresh.add(k);
+    const seq = Number(data.seq);
+    if (Number.isFinite(seq) && (seq !== paintedSeq || fresh.size)) {
+      paintedSeq = seq;
+      savePainted();
+    }
+    if (fresh.size) revealPainted(fresh);
+  } catch (e) {
+    syncStatus = "local only";
+  }
+  if (pushQueue.length && !pushTimer) pushTimer = setTimeout(flushPush, 100);
+}
+
 // ---- Painting a tile (and placeholders) onto the viewport ----
 // Colorize a cached tile's iteration values into the scratch canvas.
 function colorizeToScratch(iter) {
@@ -653,6 +757,53 @@ function blitPlaceholder(d) {
   // No ancestor available: leave the existing backdrop (pan preview / prior frame).
 }
 
+// ---- Look-ahead explore overlay ----
+// Marks, inside every cover tile, which descendant tiles up to
+// EXPLORE_LOOKAHEAD levels deeper are already painted — so you can see where
+// exploration continues before you zoom. Nested painted levels nest their
+// markers, fading with depth. Lives on its own canvas so worker results
+// blitting onto the main canvas never erase it; redrawn on every render (the
+// cover is the drawing frame) and on remote reveals.
+const EXPLORE_LOOKAHEAD = 3;
+const EXPLORE_STYLE = [[0.30, 0.07], [0.20, 0.045], [0.13, 0.03]]; // [stroke, fill] alpha per depth
+function drawExploreOverlay() {
+  exploreCtx.clearRect(0, 0, exploreCanvas.width, exploreCanvas.height);
+  if (!currentCover) return;
+  for (const d of currentCover.tiles) {
+    for (let k = 1; k <= EXPLORE_LOOKAHEAD; k++) {
+      const n = 1 << k;
+      const sub = d.destSize / n;
+      if (sub < 12) break;                       // too small to read
+      const [sa, fa] = EXPLORE_STYLE[k - 1];
+      const L = d.L + k;
+      const baseIx = d.ix << BigInt(k), baseIy = d.iy << BigInt(k);
+      exploreCtx.fillStyle = `rgba(255, 179, 71, ${fa})`;
+      exploreCtx.strokeStyle = `rgba(255, 179, 71, ${sa})`;
+      for (let jy = 0; jy < n; jy++) {
+        for (let jx = 0; jx < n; jx++) {
+          if (!painted.has(`${L}:${baseIx + BigInt(jx)}:${baseIy + BigInt(jy)}`)) continue;
+          const x = d.destX + jx * sub, y = d.destY + jy * sub;
+          exploreCtx.fillRect(x, y, sub, sub);
+          exploreCtx.strokeRect(x + 0.5, y + 0.5, sub - 1, sub - 1);
+        }
+      }
+    }
+  }
+}
+
+// Unpainted tile: near-black veil with a faint ghost of the nearest cached
+// ancestor showing through (a hint of what's underneath), plus a subtle grid
+// stroke marking it as a paintable cell. Painting clears the fog.
+function blitUnexplored(d) {
+  ctx.fillStyle = "#04060c";
+  ctx.fillRect(d.destX, d.destY, d.destSize + 1, d.destSize + 1);
+  ctx.globalAlpha = 0.15;
+  blitPlaceholder(d);               // no-op when no ancestor is cached
+  ctx.globalAlpha = 1;
+  ctx.strokeStyle = "rgba(140, 170, 255, 0.10)";
+  ctx.strokeRect(d.destX + 0.5, d.destY + 0.5, d.destSize, d.destSize);
+}
+
 // ---- Per-tile "computing" spinner (on the separate loadCanvas layer) ----
 // A tile that's queued/in-flight shows a dim wash + a spinning arc over its rect
 // until the worker result paints the real pixels (which drops it from pendingKeys).
@@ -675,14 +826,24 @@ function drawTileSpinner(d, angle) {
   loadCtx.arc(cx, cy, r, angle, angle + Math.PI * 0.6);
   loadCtx.stroke();
 }
+let hoverDesc = null;   // unpainted cover tile under the cursor (brush preview)
+function drawHoverHighlight(d) {
+  loadCtx.fillStyle = "rgba(255, 255, 255, 0.07)";
+  loadCtx.fillRect(d.destX, d.destY, d.destSize, d.destSize);
+  loadCtx.lineWidth = 2;
+  loadCtx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+  loadCtx.strokeRect(d.destX + 1, d.destY + 1, d.destSize - 2, d.destSize - 2);
+}
 function loadAnimTick(ts) {
   loadCtx.clearRect(0, 0, loadCanvas.width, loadCanvas.height);
-  if (pendingKeys.size === 0) { loadAnimRaf = 0; return; }  // nothing left: stop
+  if (hoverDesc && painted.has(paintedKeyOf(hoverDesc))) hoverDesc = null;
+  if (pendingKeys.size === 0 && !hoverDesc) { loadAnimRaf = 0; return; }  // nothing left: stop
   const angle = (ts / 1000) * Math.PI * 1.8;               // ~0.9 rev/s
   for (const key of pendingKeys) {
     const d = pendingDesc.get(key);
     if (d) drawTileSpinner(d, angle);
   }
+  if (hoverDesc) drawHoverHighlight(hoverDesc);
   loadAnimRaf = requestAnimationFrame(loadAnimTick);
 }
 function startLoadAnim() {
@@ -753,7 +914,8 @@ function repaint() {
   for (const d of currentCover.tiles) {
     const t = cacheGet(d.key);
     if (t && t.paramHash === paramHash) blitTile(d, t);
-    else blitPlaceholder(d);
+    else if (painted.has(paintedKeyOf(d))) blitPlaceholder(d);
+    else blitUnexplored(d);
   }
 }
 
@@ -779,6 +941,7 @@ function setWorkerCount(n) {
   idleWorkers = [];
   initWorkers();
   buildWorkerDots();
+  refGen = -1;   // fresh workers have no reference orbit yet
   render();
 }
 
@@ -826,11 +989,18 @@ function finishRender() {
     : "direct doubles (power≠2: no deep precision)";
   const lvl = currentCover ? currentCover.L : "?";
   statusEl.textContent =
-    `${coverCount} tiles (${hitCount} cached, ${computeCount} computed) · level ${lvl} · ` +
+    `${coverCount} tiles (${hitCount} cached, ${computeCount} computed, ${unexploredCount} unexplored) · level ${lvl} · ` +
     `${p.pxW}×${p.pxH} in ${ms} ms · zoom ~1e${zoom} · ${mode}`;
 }
 
-function render() {
+// A transient render (opts.transient, used by animation frames) blits cache /
+// placeholders / fog only — no IDB hydration, no compute enqueue — so a zoom or
+// recenter animation never burns reference orbits and worker time on levels it
+// flies straight past. The settling frame calls render() plainly to resolve.
+// (render is also wired directly as a click listener; an Event has no
+// .transient, so that path stays a full render.)
+function render(opts) {
+  const transient = !!(opts && opts.transient);
   const p = readParams();
   // Sync canvas resolution. Only resize when the dimensions actually change —
   // assigning canvas.width clears the canvas, and keeping the existing pixels
@@ -839,13 +1009,17 @@ function render() {
   els.pxH.value = p.pxH;
   if (canvas.width !== p.pxW) canvas.width = p.pxW;
   if (canvas.height !== p.pxH) canvas.height = p.pxH;
-  // Keep the spinner layer the same resolution so its coords match tile rects.
+  // Keep the overlay layers the same resolution so their coords match tile rects.
   if (loadCanvas.width !== p.pxW) loadCanvas.width = p.pxW;
   if (loadCanvas.height !== p.pxH) loadCanvas.height = p.pxH;
+  if (exploreCanvas.width !== p.pxW) exploreCanvas.width = p.pxW;
+  if (exploreCanvas.height !== p.pxH) exploreCanvas.height = p.pxH;
 
   ensurePrecision();
   const centerXd = fpToDouble(state.cx, state.frac);
   const centerYd = fpToDouble(state.cy, state.frac);
+  lastCenter = { x: centerXd, y: centerYd };
+  hoverDesc = null;   // cover descriptors are about to be rebuilt
   syncFieldsFromState();
   updateZoomBadge();
 
@@ -868,14 +1042,34 @@ function render() {
   pendingTiles = 0;
   renderStart = performance.now();
 
+  // Auto-paint the reticle target: every settled view change (wheel glide, pan,
+  // recenter, param edit all land here) reveals the tile under the center.
+  // Marking it painted *before* the cover loop lets the normal miss path
+  // resolve it in the same hydrate/compute batch as any other painted tile.
+  if (autoPaintCenter && !transient) {
+    const cd = tileAtCanvasPoint(cover, p.pxW / 2, p.pxH / 2);
+    if (cd) {
+      const pk = paintedKeyOf(cd);
+      if (addPainted(pk)) { savePainted(); schedulePush(pk); }
+    }
+  }
+
+  // Only *painted* tiles are resolved (cache → IDB → compute); the rest stay
+  // fogged until someone paints them. A cached tile always shows — cached data
+  // implies it was painted at some point (possibly by another user).
   const misses = [];
   hitCount = 0;
+  unexploredCount = 0;
   for (const d of cover.tiles) {
     const t = cacheGet(d.key);
     if (t && t.paramHash === paramHash) { blitTile(d, t); hitCount++; }
-    else { blitPlaceholder(d); misses.push(d); }
+    else if (painted.has(paintedKeyOf(d))) { blitPlaceholder(d); misses.push(d); }
+    else { blitUnexplored(d); unexploredCount++; }
   }
+  drawExploreOverlay();
   computeCount = misses.length;
+
+  if (transient) { overlay.hidden = true; updateInfoPanel(); return; }
 
   // Try IndexedDB for the misses (async); whatever isn't there gets computed.
   hydrateFromDB(misses, gen).then((stillMissing) => {
@@ -890,17 +1084,27 @@ function render() {
   updateInfoPanel();   // reflect the new cover/queue without waiting for the tick
 }
 
-// Compute the given missing tiles on the worker pool (perturbation reference is
-// shared across the batch — iteration values don't depend on which reference
-// produced them, so the view-center orbit serves every tile).
-function enqueueCompute(misses, gen, p, centerXd, centerYd) {
-  if (gen !== currentGen || misses.length === 0) return;
+// One reference orbit per generation, computed lazily on the first enqueue and
+// reused by every later one in the same gen (each painted tile is a separate
+// enqueue now, and the orbit is the expensive main-thread part).
+let refGen = -1;
+function broadcastRef(gen, p) {
+  if (refGen === gen) return;
   const ref = p.power === 2
     ? computeReferenceOrbit(state.cx, state.cy, state.frac, p.maxIter, p.escapeR)
     : { Zx: null, Zy: null, refLen: 0 };
   for (const w of workers) {
     w.postMessage({ type: "ref", gen, Zx: ref.Zx, Zy: ref.Zy, refLen: ref.refLen });
   }
+  refGen = gen;
+}
+
+// Compute the given missing tiles on the worker pool (perturbation reference is
+// shared across the batch — iteration values don't depend on which reference
+// produced them, so the view-center orbit serves every tile).
+function enqueueCompute(misses, gen, p, centerXd, centerYd) {
+  if (gen !== currentGen || misses.length === 0) return;
+  broadcastRef(gen, p);
   let jobId = 0;
   for (const d of misses) {
     pendingKeys.add(d.key);
@@ -937,20 +1141,148 @@ function spans() {
   return { spanW: state.spanW, spanH: state.spanW * pxH / pxW };
 }
 
-// Click-and-drag to pan; a plain click does nothing, a double-click re-centers.
-let drag = null;
+// ---- Painting (the primary verb): resolve one tile on demand ----
+// Hit-test the cursor against the current cover's viewport rects. Uses the
+// same naive rect→canvas-pixel mapping as pan/zoom (object-fit: cover is
+// near-1:1 because pxW/pxH default to the device resolution).
+function tileAt(e) {
+  if (!currentCover) return null;
+  const rect = canvas.getBoundingClientRect();
+  const x = (e.clientX - rect.left) * (canvas.width / rect.width);
+  const y = (e.clientY - rect.top) * (canvas.height / rect.height);
+  return tileAtCanvasPoint(currentCover, x, y);
+}
+function tileAtCanvasPoint(cover, x, y) {
+  for (const d of cover.tiles) {
+    if (x >= d.destX && x < d.destX + d.destSize &&
+        y >= d.destY && y < d.destY + d.destSize) return d;
+  }
+  return null;
+}
+
+// Resolve an already-painted cover tile: memory cache → IDB → worker compute.
+function resolveTile(d) {
+  if (pendingKeys.has(d.key)) return;
+  const t = cacheGet(d.key);
+  if (t && t.paramHash === paramHash) { blitTile(d, t); return; }
+  blitPlaceholder(d);
+  computeCount++;
+  const gen = currentGen;
+  hydrateFromDB([d], gen).then((still) => {
+    if (gen !== currentGen) return;
+    enqueueCompute(still, gen, renderParams, lastCenter.x, lastCenter.y);
+  });
+}
+
+function paintTile(d) {
+  const pk = paintedKeyOf(d);
+  if (!addPainted(pk)) return;   // already painted (maybe still computing)
+  savePainted();
+  schedulePush(pk);
+  resolveTile(d);
+}
+
+// Fresh keys from other users: resolve any that sit in the current view.
+// Deeper remote keys don't need resolving here, but they do move the
+// look-ahead markers.
+function revealPainted(freshKeys) {
+  if (!currentCover || !renderParams) return;
+  for (const d of currentCover.tiles) {
+    if (freshKeys.has(paintedKeyOf(d))) resolveTile(d);
+  }
+  drawExploreOverlay();
+}
+
+// Brush preview: outline the unpainted tile under the cursor (drawn by the
+// loadCanvas anim tick, which also clears it once the tile gets painted).
+function updateHover(e) {
+  const d = tileAt(e);
+  const nd = d && !painted.has(paintedKeyOf(d)) ? d : null;
+  if ((nd && nd.key) !== (hoverDesc && hoverDesc.key)) {
+    hoverDesc = nd;
+    startLoadAnim();
+  }
+}
+
+// Left click / left-drag *paints* tiles — the primary verb. Panning moves to
+// right-/middle-drag or space+left-drag; wheel zooms; double-click re-centers.
+let spaceDown = false;
+window.addEventListener("keydown", (e) => {
+  if (e.code !== "Space") return;
+  if (e.target.closest && e.target.closest("input, select, textarea, button")) return;
+  spaceDown = true;
+  e.preventDefault();
+});
+window.addEventListener("keyup", (e) => { if (e.code === "Space") spaceDown = false; });
+
+// ---- Keyboard panning (arrow keys / WASD) ----
+// Held keys glide the view on transient frames (cache/fog blits only);
+// releasing the last key does the settling full render. Ignored while a form
+// control has focus — the inputs need their arrow keys and letters.
+const PAN_KEYS = {
+  ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, -1], ArrowDown: [0, 1],
+  KeyA: [-1, 0], KeyD: [1, 0], KeyW: [0, -1], KeyS: [0, 1],
+};
+const KEY_PAN_RATE = 0.6;          // viewport-widths per second
+const heldPan = new Set();
+let panRaf = 0, panLastT = 0;
+
+function keyPanStep(now) {
+  if (heldPan.size === 0) { panRaf = 0; render(); return; }   // settle
+  const dt = Math.min(100, now - panLastT) / 1000;   // clamp hidden-tab gaps
+  panLastT = now;
+  let vx = 0, vy = 0;
+  for (const k of heldPan) { vx += PAN_KEYS[k][0]; vy += PAN_KEYS[k][1]; }
+  if (vx || vy) {
+    const { spanW, spanH } = spans();
+    const inv = 1 / Math.hypot(vx, vy);   // diagonals no faster than straights
+    // Screen-down = imaginary-decreasing, hence the -vy.
+    applyCenterDelta(vx * inv * KEY_PAN_RATE * dt * spanW,
+                     -vy * inv * KEY_PAN_RATE * dt * spanH);
+    render({ transient: true });
+  }
+  panRaf = requestAnimationFrame(keyPanStep);
+}
+
+window.addEventListener("keydown", (e) => {
+  if (!PAN_KEYS[e.code]) return;
+  if (e.target.closest && e.target.closest("input, select, textarea")) return;
+  e.preventDefault();
+  heldPan.add(e.code);
+  if (!panRaf) { panLastT = performance.now(); panRaf = requestAnimationFrame(keyPanStep); }
+});
+window.addEventListener("keyup", (e) => { if (PAN_KEYS[e.code]) heldPan.delete(e.code); });
+// Lost keyups (tab switch mid-hold) would pan forever — drop everything on blur.
+window.addEventListener("blur", () => heldPan.clear());
+
+let drag = null;      // pan-drag state
+let stroke = false;   // left-button paint stroke in progress
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());  // right-drag pans
 canvas.addEventListener("mousedown", (e) => {
   e.preventDefault();
+  if (e.button === 0 && !spaceDown) {
+    stroke = true;
+    const d = tileAt(e);
+    if (d) paintTile(d);
+    return;
+  }
   drag = { startX: e.clientX, startY: e.clientY, dx: 0, dy: 0, moved: false };
   canvas.style.cursor = "grabbing";
-  // Snapshot the current image so we can slide it during the drag.
+  // Snapshot the current image so we can slide it during the drag. The explore
+  // overlay can't slide with it, so clear it until the mouseup render redraws.
+  exploreCtx.clearRect(0, 0, exploreCanvas.width, exploreCanvas.height);
   buffer.width = canvas.width;
   buffer.height = canvas.height;
   bctx.drawImage(canvas, 0, 0);
 });
 
 window.addEventListener("mousemove", (e) => {
-  if (!drag) return;
+  if (stroke) {
+    const d = tileAt(e);
+    if (d) paintTile(d);
+    return;
+  }
+  if (!drag) { updateHover(e); return; }
   drag.dx = e.clientX - drag.startX;
   drag.dy = e.clientY - drag.startY;
   if (Math.abs(drag.dx) > 3 || Math.abs(drag.dy) > 3) drag.moved = true;
@@ -965,12 +1297,13 @@ window.addEventListener("mousemove", (e) => {
 });
 
 window.addEventListener("mouseup", (e) => {
+  if (stroke) { stroke = false; updateHover(e); return; }
   if (!drag) return;
   const d = drag;
   drag = null;
   canvas.style.cursor = "";
 
-  // A plain click (no movement) does nothing — only a drag pans.
+  // A plain pan-click (no movement) does nothing — only a drag pans.
   if (!d.moved) return;
 
   const { spanW, spanH } = spans();
@@ -1002,7 +1335,8 @@ canvas.addEventListener("dblclick", (e) => {
     const k = ease(lin);
     state.cx = cx0 + fpFromDouble(dxReal * k, frac0);
     state.cy = cy0 + fpFromDouble(dyReal * k, frac0);
-    render();
+    // Fly on cheap transient frames; resolve (hydrate/compute) on landing.
+    render({ transient: lin < 1 });
     recenterRaf = lin < 1 ? requestAnimationFrame(step) : 0;
   };
   recenterRaf = requestAnimationFrame(step);
@@ -1011,28 +1345,73 @@ canvas.addEventListener("dblclick", (e) => {
 // Wheel over the fractal zooms; over a floating panel it scrolls that panel.
 // The canvas now fills the viewport, so a bounding-box test would catch the
 // panels too — exclude them by checking the event's actual target.
+//
+// Zoom is *animated*: notches accumulate into pendingLog (log-space, so notches
+// compose additively and up/down cancel) and an rAF loop eases the actual span
+// toward it, applying the keep-cursor-point-fixed step each frame with offsets
+// recomputed from the live span — the anchor point stays truly pinned across
+// the whole glide. Frames render transient (cache/fog blits only); the final
+// frame does a full render() to hydrate/compute at the destination.
+let zoomAnim = null;           // { pendingLog, fx, fy, lastT }
+const ZOOM_TAU = 90;           // ms to close ~63% of the remaining zoom
+
+function zoomStep(now) {
+  const za = zoomAnim;
+  const dt = Math.min(100, now - za.lastT);   // clamp hidden-tab rAF gaps
+  za.lastT = now;
+  let d = za.pendingLog * (1 - Math.exp(-dt / ZOOM_TAU));
+  const done = Math.abs(za.pendingLog - d) < 0.002;  // sub-0.2% of span left: snap
+  if (done) d = za.pendingLog;
+  za.pendingLog -= d;
+
+  const factor = Math.exp(d);
+  const { spanW, spanH } = spans();
+  const offX = (za.fx - 0.5) * spanW;
+  const offY = (0.5 - za.fy) * spanH;
+  // Keep the cursor point fixed while scaling: center += off*(1-factor).
+  state.spanW = spanW * factor;
+  ensurePrecision();
+  applyCenterDelta(offX * (1 - factor), offY * (1 - factor));
+
+  if (done) { zoomAnim = null; render(); }
+  else { render({ transient: true }); requestAnimationFrame(zoomStep); }
+}
+
 window.addEventListener("wheel", (e) => {
   if (e.target.closest(".controls, header")) return; // let the panel scroll
-  const rect = canvas.getBoundingClientRect();
+  // Wheel input is dead while a drag/stroke is active: pressing the wheel
+  // *button* (middle-drag pan) easily nudges the wheel, and zooming mid-drag
+  // would desync the shifted-snapshot preview (and mid-stroke, the tile
+  // hit-testing). Middle-drag must pan exactly like right-drag — never zoom.
+  if (drag || stroke) { e.preventDefault(); return; }
 
   e.preventDefault();
   // Shift = fine control: a gentler per-notch ratio for precise zooming.
   const step = e.shiftKey ? 0.92 : 0.7;
-  const factor = e.deltaY < 0 ? step : 1 / step;
-  const fx = (e.clientX - rect.left) / rect.width;
-  const fy = (e.clientY - rect.top) / rect.height;
-  const { spanW, spanH } = spans();
-
-  // Offset of the cursor point from the current center, in the complex plane.
-  const offX = (fx - 0.5) * spanW;
-  const offY = (0.5 - fy) * spanH;
-
-  // Keep that point fixed while scaling: new center = center + off*(1-factor).
-  state.spanW = spanW * factor;
-  ensurePrecision();
-  applyCenterDelta(offX * (1 - factor), offY * (1 - factor));
-  render();
+  const notch = Math.log(e.deltaY < 0 ? step : 1 / step);
+  // Anchor at the view center (the reticle), not the cursor: zooming dives
+  // straight toward what's centered instead of drifting toward the mouse.
+  // (zoomStep handles any anchor; fx/fy = 0.5 makes its center delta zero.)
+  if (zoomAnim) {
+    zoomAnim.pendingLog += notch;   // extend the glide in flight
+  } else {
+    zoomAnim = { pendingLog: notch, fx: 0.5, fy: 0.5, lastT: performance.now() };
+    requestAnimationFrame(zoomStep);
+  }
 }, { passive: false });
+
+// Auto-paint toggle. The reticle stays visible either way (it marks the zoom
+// anchor / view center, not just the paint target). Turning auto-paint on
+// reveals the current center immediately (no re-render).
+els.autoPaint.checked = autoPaintCenter;
+els.autoPaint.addEventListener("change", () => {
+  autoPaintCenter = els.autoPaint.checked;
+  saveSetting("autoPaintCenter", autoPaintCenter);
+  if (autoPaintCenter && currentCover && renderParams) {
+    const d = tileAtCanvasPoint(currentCover, canvas.width / 2, canvas.height / 2);
+    if (d) paintTile(d);
+  }
+});
 
 $("renderBtn").addEventListener("click", render);
 
@@ -1243,6 +1622,7 @@ const info = {
   pending: $("iPending"), queue: $("iQueue"),
   db: $("iDb"), dbBar: $("iDbBar"), dbMax: $("iDbMax"), dbClear: $("iDbClear"),
   gen: $("iGen"), computed: $("iComputed"),
+  sync: $("iSync"), painted: $("iPainted"), explored: $("iExplored"),
 };
 
 // Float32 values per tile, in MB — the dominant memory cost of the LRU.
@@ -1297,6 +1677,14 @@ function updateInfoPanel() {
 
   info.gen.textContent = currentGen;
   info.computed.textContent = sessionComputed;
+
+  info.sync.textContent = syncStatus;
+  info.painted.textContent = painted.size;
+  let explored = 0;
+  if (currentCover) {
+    for (const d of currentCover.tiles) if (painted.has(paintedKeyOf(d))) explored++;
+  }
+  info.explored.textContent = `${explored} / ${coverCount}`;
 }
 
 // ---- Editable, persisted controls ----
@@ -1358,3 +1746,7 @@ initWorkers();
 renderStopList();
 els.customStops.hidden = els.palettePreset.value !== "custom";
 render();
+// Painted-set sync: pull everyone's paints now and on a slow poll. The first
+// poll lands after the initial render, so revealPainted finds a live cover.
+pollPainted();
+setInterval(pollPainted, 3000);

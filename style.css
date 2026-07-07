@@ -57,22 +57,48 @@ canvas {
   display: block;
   object-fit: cover; /* fill the whole screen; crop overflow rather than letterbox */
   background: #000;
-  cursor: grab;
+  cursor: crosshair; /* painting is the primary verb; pan shows "grabbing" */
   image-rendering: pixelated;
 }
 
-/* Loading-spinner layer: pinned directly over #canvas, same object-fit:cover
-   mapping (inherited from the `canvas` rule) so spinner rects line up with tiles.
-   Never grabs the cursor or pointer events — purely decorative. */
-#loadCanvas {
+/* Overlay layers: pinned directly over #canvas, same object-fit:cover mapping
+   (inherited from the `canvas` rule) so their rects line up with tiles. Never
+   grab the cursor or pointer events — purely decorative. exploreCanvas holds
+   the painted-descendant look-ahead markers; loadCanvas the spinners + hover. */
+#exploreCanvas, #loadCanvas {
   position: absolute;
   inset: 0;
-  z-index: 1;
   pointer-events: none;
   cursor: default;
   background: transparent;
   image-rendering: auto; /* smooth arcs even when cover-upscaled */
 }
+#exploreCanvas { z-index: 1; }
+#loadCanvas { z-index: 2; }
+
+/* Target reticle: fixed at the viewport center, which is exactly the canvas
+   center pixel (object-fit: cover scales about the center), i.e. state.cx/cy. */
+.reticle {
+  position: fixed;
+  top: 50%;
+  left: 50%;
+  width: 26px;
+  height: 26px;
+  transform: translate(-50%, -50%);
+  z-index: 4;
+  pointer-events: none;
+  border: 1.5px solid rgba(255, 255, 255, 0.55);
+  border-radius: 50%;
+  filter: drop-shadow(0 0 2px rgba(0, 0, 0, 0.8));
+}
+.reticle::before, .reticle::after {
+  content: "";
+  position: absolute;
+  background: rgba(255, 255, 255, 0.55);
+}
+.reticle::before { left: 50%; top: -7px; bottom: -7px; width: 1px; transform: translateX(-50%); }
+.reticle::after { top: 50%; left: -7px; right: -7px; height: 1px; transform: translateY(-50%); }
+.reticle[hidden] { display: none; }
 
 .overlay[hidden] { display: none; }
 .overlay {

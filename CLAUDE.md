@@ -1,17 +1,26 @@
 # Mandelbrot Generator
 
-A static, dependency-free Mandelbrot explorer. Vanilla JS + Canvas. No build step,
-no framework, no package manager — just open `index.html`.
+A dependency-free, *paint-to-reveal* Mandelbrot explorer. Vanilla JS + Canvas, no build
+step, no framework, no package manager. Tiles start fogged and are only computed when a
+user paints (clicks) them; the painted set is shared by all users via a tiny Node server.
 
 ## Files
 - `index.html` — markup and all controls (the `id`s here are the contract with `app.js`).
 - `style.css` — dark theme; layout is a flex column (`header` + `main`).
 - `app.js` — everything: math, worker pool, rendering, interactions, palette UI.
+- `server.js` — shared painted-tile API + static server. Node builtins only (no
+  package.json). Store is `painted-tiles.jsonl` (gitignored), an append-only key log.
 
 ## Running
-Open `index.html` directly (`file://`) — it must work without a server. This is why the
+`./serve.sh` (= `node server.js 8000`) serves the site *and* the shared-painting API.
+Opening `index.html` directly (`file://`) must keep working — painting then degrades to a
+local-only set (localStorage), same as any static host without the API. This is why the
 Web Worker is built from an inlined Blob URL (`WORKER_SRC`), not a separate `.js` file:
 Chrome blocks `new Worker('file.js')` from `file://` origins.
+
+In production nginx serves the static files and proxies only the API:
+`location /api/ { proxy_pass http://127.0.0.1:8000; }` with `node server.js` running in
+the docroot (see deploy.sh comments).
 
 There is no test suite in-repo. To verify the math, write a throwaway Node script that
 copies the fixed-point + perturbation functions and compares against either direct
@@ -51,7 +60,59 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   (`blitValues`) but only caches/decrements/pumps the worker on `final`.
 - `currentGen` is a generation token. Every `render()` bumps it and clears `jobQueue` +
   `pendingKeys`; stale tile/IDB results (wrong `gen`) are discarded instead of painted.
+- **Transient renders.** `render({ transient: true })` blits cache/placeholders/fog only —
+  no IDB hydration, no compute enqueue. Animation frames (wheel zoom, dblclick recenter)
+  use it so a glide never burns reference orbits / worker time on levels it flies past;
+  the settling frame calls `render()` plainly. (`render` is also a click listener; an
+  Event has no `.transient`, so that path is a full render.)
+- **Wheel zoom is animated and center-anchored.** Notches accumulate into
+  `zoomAnim.pendingLog` (log-space, so they compose additively and opposite directions
+  cancel) and `zoomStep` eases the span toward it (`ZOOM_TAU`). The anchor is the view
+  center (the reticle) — `fx/fy = 0.5`, so the center never moves; you aim by
+  panning/re-centering, then dive. `zoomStep` still handles an arbitrary anchor
+  (keep-anchor-point-fixed each frame from the live span) if cursor-anchoring is ever
+  wanted back. Don't zoom by mutating `state.spanW` directly from the handler.
 - `tileToScratch` colorizes a tile's values into the shared `scratch` canvas before each blit.
+
+### Paint-to-reveal (shared "fog of war")
+- **Tiles compute only when painted.** `render()` resolves a cover tile through
+  cache → IDB → compute *only if* its place-key is in the `painted` set; otherwise it draws
+  `blitUnexplored` (dark veil + faint ancestor ghost + grid stroke). A cached tile always
+  shows regardless — cached data implies someone painted it once.
+- **Painted keys are `L:ix:iy` — no `paramHash`.** Painting is a property of the *place*:
+  a revealed tile stays revealed across iteration-parameter changes (those still recompute
+  values under the new `paramHash`).
+- **Interactions are paint-first.** Left click/drag paints (`paintTile` → `resolveTile`);
+  pan moved to right-/middle-drag, space+left-drag, or held arrows/WASD (`keyPanStep`
+  glides on transient frames, settles on release; keys are ignored while a form control
+  has focus). `contextmenu` is suppressed on the canvas. Wheel zoom and dblclick re-center
+  are unchanged. Hover shows a brush outline on the `loadCanvas` layer (same rAF tick as
+  the spinners).
+- **Look-ahead explore overlay.** `drawExploreOverlay` marks, inside each cover tile,
+  descendants up to `EXPLORE_LOOKAHEAD` (3) levels deeper that are painted — nested
+  translucent rects fading with depth, so you can see where exploration continues before
+  zooming. It lives on its own `#exploreCanvas` layer (z-order: fractal < explore <
+  spinners) because worker blits onto the main canvas would erase inline markers. Redrawn
+  every render (transient included) and on `revealPainted`; cleared during a pan drag
+  (the snapshot preview slides but the overlay can't).
+- **Auto-paint center** (`autoPaintCenter`, persisted; "Painting" checkbox in the panel):
+  every settled (non-transient) `render()` marks the tile under the view center as painted
+  before the cover loop, so it resolves in the same batch as other painted misses. The
+  `#reticle` div (CSS crosshair fixed at the viewport center = the canvas center pixel,
+  since `object-fit: cover` scales about the center) is always visible — it marks the
+  view center / wheel-zoom anchor, independent of the checkbox.
+- **Sharing.** `server.js` keeps an append-only key log; its array index is the sync
+  cursor. Clients `POST api/painted` local paints (batched, 400 ms) and poll
+  `GET api/painted?since=<seq>` every 3 s; fresh remote keys in view resolve via
+  `revealPainted`. Everything is idempotent (server dedupes, `addPainted` dedupes), so
+  re-sends are harmless. Relative URLs → works under any mount path, same-origin only.
+- **Fallback.** On `file://` or when the API errors, `syncStatus` flips to local-only and
+  the painted set lives in localStorage (`mandelbrot-painted`, capped at
+  `PAINTED_PERSIST_MAX`; when capped, the sync cursor resets to 0 so the next session
+  re-pulls the full set from the server — the server is the source of truth).
+- **Per-gen reference orbit.** Each paint is its own `enqueueCompute`, so the expensive
+  main-thread reference orbit is computed lazily once per generation (`broadcastRef`,
+  `refGen`) instead of per enqueue.
 
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
@@ -86,9 +147,12 @@ Float64 dies at ~1e-14. To go deeper:
   coordinates. Parsing/formatting go through `fpFromDecimalString` / `fpToDecimalString`.
 - **Canvas is only resized when dimensions change.** Assigning `canvas.width` clears it;
   skipping that lets a pan's shifted backdrop persist until new tiles paint over it.
-- **Pan preview shifts pixels, not the element.** `mousedown` snapshots into the offscreen
-  `buffer`; `mousemove` redraws it offset inside the stationary canvas. Do NOT use a CSS
-  `transform` on the canvas — it caused a visible snap-back on release.
+- **Pan preview shifts pixels, not the element.** Pan-`mousedown` snapshots into the
+  offscreen `buffer`; `mousemove` redraws it offset inside the stationary canvas. Do NOT
+  use a CSS `transform` on the canvas — it caused a visible snap-back on release.
+- **Left button is reserved for painting.** Don't rebind it to pan; pan is
+  right-/middle-drag or space+drag, and the space keydown is ignored while a form control
+  has focus (typing spaces in inputs must not arm panning).
 - **Wheel only zooms when the cursor is over the canvas**; otherwise it returns early so
   the controls panel scrolls normally. The page itself never scrolls (`body { overflow:hidden }`).
 - The reference orbit runs on the **main thread**, so a very high max-iter at extreme zoom
@@ -113,3 +177,8 @@ Float64 dies at ~1e-14. To go deeper:
   level's; `pickLevel` rounds to keep it minimal.
 - Cache bounds are tunable: `MAX_CACHE_TILES` (memory LRU) and `DB_MAX` (IndexedDB prune).
 - IndexedDB on some `file://` origins is blocked/opaque → automatic memory-only fallback.
+- Paints made while the API is unreachable sit in `pushQueue` (retried each poll) but are
+  lost if the tab closes first — the tiles stay revealed locally, just never shared.
+- The painted log grows without bound (keys are never deleted); fine for a long while,
+  but a prune/compaction story is future work. There's no auth/rate limit on the API
+  beyond key-shape validation — anyone can paint, which is the point, but also the risk.
