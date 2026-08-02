@@ -30,6 +30,19 @@ DOMAIN="${DEPLOY_DOMAIN:?DEPLOY_DOMAIN not set in .env}"
 # Without it the site still works, but painting stays per-browser (local only).
 FILES=(index.html app.js style.css server.js)
 
+# ── Deploy stamp ─────────────────────────────────────────────────────────────
+# Ship a deploy.json alongside the site so "what's live?" is answerable from
+# outside — the status dashboard reads it over plain https, and so can you.
+# Timestamp + short SHA + branch leak nothing actionable; keep it public.
+# Degrades to no stamp outside a git checkout rather than failing the deploy.
+if git rev-parse HEAD >/dev/null 2>&1; then
+  DIRTY=false; git diff --quiet HEAD -- 2>/dev/null || DIRTY=true
+  printf '{"deployed_at":"%s","commit":"%s","branch":"%s","dirty":%s}\n' \
+    "$(date -u +%FT%TZ)" "$(git rev-parse --short HEAD)" \
+    "$(git rev-parse --abbrev-ref HEAD)" "$DIRTY" > deploy.json
+  FILES+=(deploy.json)
+fi
+
 # Verify the payload exists before we touch the network.
 for f in "${FILES[@]}"; do
   [[ -f "$f" ]] || { echo "missing file: $f" >&2; exit 1; }

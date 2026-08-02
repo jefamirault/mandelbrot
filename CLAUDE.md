@@ -134,6 +134,10 @@ Float64 dies at ~1e-14. To go deeper:
 - `power !== 2` falls back to direct double iteration (`iterate()`), i.e. **no deep
   precision** — the status line says so.
 
+Every deploy also ships a `deploy.json` stamp (UTC timestamp, short commit SHA, branch,
+dirty flag). It is public on purpose and is what https://status.jefamirault.com/ reads to
+report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
+
 ## Invariants & gotchas
 - **Square pixels.** One `scale = state.spanW / pxW` drives both axes. The view *height*
   is derived (`spanH = scale * pxH`); the height field is informational and an edit to it
