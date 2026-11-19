@@ -330,10 +330,40 @@ function readParams() {
 const WORKER_SRC = `
 let REF = { Zx: null, Zy: null, refLen: 0 };
 
+// A tile renders in ~25 ms slices (renderTile is a generator that yields per
+// row), so messages queued behind it — above all "cancel" for a tile the view
+// has left — get handled mid-tile instead of after seconds of deep-zoom work.
+// Slices are chained through a MessageChannel (setTimeout clamps to 4 ms).
+let job = null;   // { key, it }
+const SLICE_MS = 25;
+const tick = new MessageChannel();
+tick.port1.onmessage = step;
+function step() {
+  const cur = job;
+  if (!cur) return;
+  const end = performance.now() + SLICE_MS;
+  for (;;) {
+    if (cur.it.next().done) { if (job === cur) job = null; return; }
+    if (job !== cur) return;
+    if (performance.now() >= end) break;
+  }
+  tick.port2.postMessage(0);
+}
+
 self.onmessage = function (e) {
   const m = e.data;
   if (m.type === "ref") { REF = { Zx: m.Zx, Zy: m.Zy, refLen: m.refLen }; return; }
-  renderTile(m);
+  if (m.type === "cancel") {
+    // Only if it's still ours: if the tile already finished, its final result
+    // is on the way and the main thread frees the worker on that instead.
+    if (job && job.key === m.key) {
+      job = null;
+      self.postMessage({ type: "cancelled", key: m.key });
+    }
+    return;
+  }
+  job = { key: m.key, it: renderTile(m) };
+  step();
 };
 
 // Below this tile pixel size, plain doubles can't resolve neighboring pixels'
@@ -342,7 +372,7 @@ self.onmessage = function (e) {
 // the cardioid/bulb test, which needs an absolute c.
 const DIRECT_MIN_SCALE = 1e-12;
 
-function renderTile(j) {
+function* renderTile(j) {
   const maxIter = j.maxIter, power = j.power;
   const escapeSq = j.escapeR * j.escapeR;
   const lnEscape = Math.log(j.escapeR);
@@ -494,7 +524,8 @@ function renderTile(j) {
     }
     return true;
   }
-  function mariani(gx0, gy0, gx1, gy1, s) {
+  function* mariani(gx0, gy0, gx1, gy1, s) {
+    yield;
     let allIn = true;
     for (let gx = gx0; gx <= gx1; gx++) {
       if (point(gx, gy0, s) >= 0) allIn = false;
@@ -511,8 +542,8 @@ function renderTile(j) {
       return;
     }
     const gxm = (gx0 + gx1) >> 1, gym = (gy0 + gy1) >> 1;   // children share edges (no recompute: known mask)
-    mariani(gx0, gy0, gxm, gym, s); mariani(gxm, gy0, gx1, gym, s);
-    mariani(gx0, gym, gxm, gy1, s); mariani(gxm, gym, gx1, gy1, s);
+    yield* mariani(gx0, gy0, gxm, gym, s); yield* mariani(gxm, gy0, gx1, gym, s);
+    yield* mariani(gx0, gym, gxm, gy1, s); yield* mariani(gxm, gym, gx1, gy1, s);
   }
 
   // Progressive refinement: coarse stride first (block-replicated so the tile
@@ -526,9 +557,12 @@ function renderTile(j) {
   for (let pi = 0; pi < passes.length; pi++) {
     const s = passes[pi], G = Math.ceil(N / s);
     if ((pi === 0 && passes.length > 1) || !j.fill) {
-      for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) point(gx, gy, s);
+      for (let gy = 0; gy < G; gy++) {
+        for (let gx = 0; gx < G; gx++) point(gx, gy, s);
+        yield;                                       // slice boundary (see step())
+      }
     } else {
-      mariani(0, 0, G - 1, G - 1, s);
+      yield* mariani(0, 0, G - 1, G - 1, s);
     }
     if (pi === passes.length - 1) {
       self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer, final: true }, [iter.buffer]);
@@ -599,8 +633,13 @@ const TILE_ALGO = INTERIOR_FILL ? "a2f" : "a2";
 let paramHash = "";             // tiles are only reusable within the same iter params
 let currentCover = null;        // tiles covering the current view (for repaint)
 const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts }
-const pendingKeys = new Set();  // keys with an in-flight compute job
+const pendingKeys = new Set();  // keys the *current view* is waiting on (queued or computing)
 const pendingDesc = new Map();  // key -> cover descriptor (where to paint the result)
+// Keys being computed on a worker right now -> { w, L, ix, iy, paramHash, cancelling }.
+// Independent of the generation: tile values don't depend on the view that
+// requested them, so a result that lands after the view moved is still cached
+// (and painted if the new view wants it) instead of being recomputed.
+const inFlight = new Map();
 let coverCount = 0, hitCount = 0, computeCount = 0, unexploredCount = 0; // status-line instrumentation
 let lastCenter = { x: 0, y: 0 };   // view center as doubles, for late (paint-time) enqueues
 let sessionComputed = 0, lastRenderMs = 0;          // info-panel instrumentation
@@ -901,7 +940,8 @@ async function flushPush() {
 }
 
 async function pollRoom() {
-  if (game.mode !== "room") return;
+  // Hidden tab: skip the tick (the next visible one catches up via the cursor).
+  if (game.mode !== "room" || document.hidden) return;
   let data;
   try {
     data = await api("GET", roomUrl(`state?since=${paintedSeq}`));
@@ -1390,42 +1430,79 @@ function setWorkerCount(n) {
   for (const w of workers) w.terminate();
   workers = [];
   idleWorkers = [];
+  inFlight.clear();
   initWorkers();
   buildWorkerDots();
   refGen = -1;   // fresh workers have no reference orbit yet
   render();
 }
 
+// Paint a finished tile if the current view is waiting on it.
+function settlePending(key, t) {
+  if (!pendingKeys.has(key)) return;
+  pendingKeys.delete(key);
+  blitTile(pendingDesc.get(key), t);   // paint over the placeholder
+  if (--pendingTiles === 0) finishRender();
+}
+
+// Hand the worker its next job. Jobs whose tile got cached meanwhile (e.g. a
+// cancel that lost the race and finished anyway) are skipped. While the tab is
+// hidden, nothing new starts (battery); visibilitychange resumes the pool.
 function pumpWorker(w) {
-  if (jobQueue.length === 0) { idleWorkers.push(w); return; }
-  w.postMessage(jobQueue.shift());
+  while (jobQueue.length && !document.hidden) {
+    const job = jobQueue.shift();
+    const t = tileCache.get(job.key);
+    if (t) { settlePending(job.key, t); continue; }
+    const { meta, ...msg } = job;
+    inFlight.set(job.key, { w, ...meta, cancelling: false });
+    w.postMessage(msg);
+    return;
+  }
+  idleWorkers.push(w);
+}
+document.addEventListener("visibilitychange", () => {
+  if (document.hidden) return;
+  const idle = idleWorkers;
+  idleWorkers = [];
+  for (const w of idle) pumpWorker(w);
+});
+
+// Tell workers to drop tiles the view no longer needs (they check between
+// ~25 ms slices). The worker answers "cancelled", or — if it already finished
+// — the final result arrives and is cached like any other.
+function cancelUnwanted(wanted) {
+  for (const [key, f] of inFlight) {
+    if (wanted.has(key) || f.cancelling) continue;
+    f.cancelling = true;
+    f.w.postMessage({ type: "cancel", key });
+  }
 }
 
 function onWorkerDone(w, data) {
-  // Progressive intermediate frame: the worker is still refining this tile, so
-  // just paint the coarse preview if it's still current — don't cache and don't
-  // pump (the worker isn't free until the final pass).
-  if (!data.final) {
-    if (data.gen === currentGen && pendingKeys.has(data.key)) {
-      blitValues(pendingDesc.get(data.key), new Float32Array(data.iter));
-    }
+  if (data.type === "cancelled") {
+    inFlight.delete(data.key);
+    pumpWorker(w);
     return;
   }
-  if (data.gen === currentGen && pendingKeys.has(data.key)) {
-    const d = pendingDesc.get(data.key);
+  // Progressive intermediate frame: the worker is still refining this tile, so
+  // just paint the coarse preview if the view wants it — don't cache and don't
+  // pump (the worker isn't free until the final pass).
+  if (!data.final) {
+    if (pendingKeys.has(data.key)) blitValues(pendingDesc.get(data.key), new Float32Array(data.iter));
+    return;
+  }
+  const f = inFlight.get(data.key);
+  inFlight.delete(data.key);
+  if (f) {
     const t = {
       key: data.key, iter: new Float32Array(data.iter),
-      L: d.L, ix: d.ix, iy: d.iy, paramHash, ts: Date.now(),
+      L: f.L, ix: f.ix, iy: f.iy, paramHash: f.paramHash, ts: Date.now(),
     };
     cachePut(t);
-    persistTile(t);                 // write-through to IndexedDB (stage 3)
-    pendingKeys.delete(data.key);
-    blitTile(d, t);                 // paint over the placeholder
-    pendingTiles--;
+    persistTile(t);                 // write-through to IndexedDB
     sessionComputed++;
-    if (pendingTiles === 0) finishRender();
+    settlePending(data.key, t);
   }
-  // Keep the worker busy regardless of whether the final result was stale.
   pumpWorker(w);
 }
 
@@ -1519,6 +1596,7 @@ function render(opts) {
   computeCount = misses.length;
 
   if (transient) { overlay.hidden = true; updateInfoPanel(); return; }
+  cancelUnwanted(new Set(misses.map((d) => d.key)));
 
   // Try IndexedDB for the misses (async); whatever isn't there gets computed.
   hydrateFromDB(misses, gen).then((stillMissing) => {
@@ -1553,19 +1631,30 @@ function broadcastRef(gen, p) {
 // produced them, so the view-center orbit serves every tile).
 function enqueueCompute(misses, gen, p, centerXd, centerYd) {
   if (gen !== currentGen || misses.length === 0) return;
-  broadcastRef(gen, p);
+  // Center-out: the tile under the reticle first, then by distance from it.
+  const dist = (d) => (d.destX + d.destSize / 2 - p.pxW / 2) ** 2 + (d.destY + d.destSize / 2 - p.pxH / 2) ** 2;
+  const ordered = misses.slice().sort((a, b) => dist(a) - dist(b));
+  const jobs = [];
   let jobId = 0;
-  for (const d of misses) {
+  for (const d of ordered) {
+    if (pendingKeys.has(d.key)) continue;
     pendingKeys.add(d.key);
     pendingDesc.set(d.key, d);
     pendingTiles++;
-    jobQueue.push({
+    const f = inFlight.get(d.key);
+    if (f && !f.cancelling) continue;   // already computing: its result settles this pending key
+    jobs.push({
+      meta: { L: d.L, ix: d.ix, iy: d.iy, paramHash },   // kept on the main thread (see pumpWorker)
       type: "tile", gen, jobId: jobId++, key: d.key,
       power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
       tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES, fill: INTERIOR_FILL,
       tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
-      left: centerXd + d.odx, top: centerYd + d.ody,       // fallback absolute origin
+      left: centerXd + d.odx, top: centerYd + d.ody,       // absolute origin (direct iteration)
     });
+  }
+  if (jobs.length) {
+    broadcastRef(gen, p);           // before any of this gen's tile messages
+    jobQueue.push(...jobs);
   }
   const idle = idleWorkers;
   idleWorkers = [];

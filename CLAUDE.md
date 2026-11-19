@@ -69,7 +69,16 @@ the phase-1 work (track it in the BLA issue, #7).
   otherwise watch a blank tile until it finished. `onWorkerDone` paints intermediate frames
   (`blitValues`) but only caches/decrements/pumps the worker on `final`.
 - `currentGen` is a generation token. Every `render()` bumps it and clears `jobQueue` +
-  `pendingKeys`; stale tile/IDB results (wrong `gen`) are discarded instead of painted.
+  `pendingKeys` (what the *current view* waits on); stale IDB lookups are discarded. Worker
+  results are **not** discarded by generation (#5): `inFlight` tracks tiles being computed
+  independently of the view, and a result that lands after the view moved is cached and
+  painted if the new view wants it. `enqueueCompute` never re-queues an in-flight key. Full
+  renders `cancelUnwanted()` the in-flight tiles that left the view: the worker renders in
+  ~25 ms generator slices (`renderTile` is a `function*`, chained via `MessageChannel`), so
+  a `cancel` is handled mid-tile and answered with `cancelled`. If the tile finished first,
+  the final result arrives instead and is simply cached. Jobs run center-out from the
+  reticle. While `document.hidden`, `pumpWorker` starts nothing new and `pollRoom` skips
+  its tick; `visibilitychange` resumes the pool.
 - **Transient renders.** `render({ transient: true })` blits cache/placeholders/fog only —
   no IDB hydration, no compute enqueue. Animation frames (wheel zoom, dblclick recenter)
   use it so a glide never burns reference orbits / worker time on levels it flies past;

@@ -35,9 +35,17 @@ const app = new Function(
 const wStart = src.indexOf("const WORKER_SRC = `") + "const WORKER_SRC = `".length;
 const WORKER = src.slice(wStart, src.indexOf("\n`;", wStart));
 let posted = null;
-const worker = new Function("self", WORKER + "\nreturn { setRef: (r) => { REF = r; }, renderTile };")({
+// MessageChannel is stubbed: the worker only uses it to chain time slices, and
+// a real port would keep Node's event loop alive. renderTile may be a generator
+// (sliced, current) or a plain function (older copies), so drain either.
+const stubChannel = function () { this.port1 = {}; this.port2 = { postMessage() {} }; };
+const worker = new Function("self", "MessageChannel", WORKER + "\nreturn { setRef: (r) => { REF = r; }, renderTile };")({
   postMessage: (m) => { if (m.final) posted = new Float32Array(m.iter); },
-});
+}, stubChannel);
+function renderTile(job) {
+  const r = worker.renderTile(job);
+  if (r && typeof r.next === "function") for (const _ of r);
+}
 
 const N = 256;
 const LN2 = Math.LN2;
@@ -78,10 +86,10 @@ function run(t) {
     tileOriginDx: -t.span / 2, tileOriginDy: t.span / 2,
     left: cxd - t.span / 2, top: cyd + t.span / 2,
   };
-  worker.renderTile(job);                     // warm-up (JIT)
+  renderTile(job);                            // warm-up (JIT)
   const reps = t.reps || 1;
   const a = performance.now();
-  for (let r = 0; r < reps; r++) worker.renderTile(job);
+  for (let r = 0; r < reps; r++) renderTile(job);
   const ms = (performance.now() - a) / reps;
   const got = posted;
 
