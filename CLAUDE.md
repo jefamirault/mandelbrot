@@ -41,9 +41,11 @@ reference-orbit code on fixed tiles (interior, boundary, outside, deep), times t
 checks every pixel against brute-force iteration (direct doubles shallow; sparse
 full-BigInt deep). Run it before and after any worker change; `node bench/bench.js
 old.js` benchmarks another copy (`git show HEAD:app.js > old.js`), and `ONLY=` / `FILL=1`
-filter tiles and enable the interior fill. Expect `class 0` everywhere in exact mode. The
-deep 1e-25 tile shows a smooth-value maxΔ of ~33 at a few chaotic pixels; that predates
-the phase-1 work (track it in the BLA issue, #7).
+filter tiles and enable the interior fill, `NOBLA=1` turns off BLA. Expect `class 0`
+everywhere. Deep tiles show smooth-value maxΔ of tens to hundreds at a few chaotic pixels
+(~0.5% of them): that's double-precision perturbation being reference-dependent there
+(with the reference *at* the pixel it matches BigInt; moving it 1 px shifts the value by
+~14), not a bug. Fixing it needs multi-reference glitch correction.
 `node --check app.js` after any edit.
 
 ## Architecture
@@ -237,6 +239,18 @@ the phase-1 work (track it in the BLA issue, #7).
   new ones and show seams.
 - `point()` + the `known` mask carry samples from coarse passes into finer ones, so no
   pixel is computed twice.
+- **Bilinear approximation (BLA, #7)** in the perturbation path: while |dz| ≪ |Z| a step
+  is linear in (dz, dc), so a binary tree of merged steps (`buildBLA`, built in each
+  worker on `ref`, ~6 ms at 20k iterations) lets `perturbBLA` skip up to thousands of
+  iterations at once. The validity radius depends on a |dc| bound: `broadcastRef` sends
+  one for the whole view (`dcView`) so each worker normally holds one table (~40 B per
+  reference iteration). `BLA_EPS = 2^-48` was chosen by measurement: no extra error vs
+  BigInt, and less deviation than moving the reference 40 px already causes. Pixels whose
+  |dc| exceeds every level-1 radius use the lean `perturb` loop (BLA's checks cost ~13%
+  where it can't fire). Big wins only where pixels shadow the reference: ~40x on a
+  minibrot-centered tile, 2.4–3.9x for whole minibrot views, ~5% on boundary spirals
+  (pixels leave the reference for the last half of their orbit, where nothing linear
+  applies). Exact periodicity still works (state is still `(dz, refI)`).
 
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
@@ -304,10 +318,9 @@ Float64 dies at ~1e-14. To go deeper:
 
 ## Performance work (plan: issues #4–#10)
 Done: #4 compute shortcuts, #5 scheduling (open only for reusing the reference orbit
-across generations, measured ~10 ms, low value), #6 draw cache, #8 shared tiles, #10
-device profile. Remaining: **#7 bilinear approximation (BLA) for deep zoom** (next; the
-issue has a handoff comment with the constraints) and **#9 WebAssembly SIMD** (go/no-go
-after #7). Method for every phase: measure first (bench + headless-Chrome CDP scripts),
+across generations, measured ~10 ms, low value), #6 draw cache, #7 BLA, #8 shared tiles,
+#10 device profile. Remaining: **#9 WebAssembly SIMD** (go/no-go; the deep cost that BLA
+can't remove is plain single-step perturbation far from the reference). Method for every phase: measure first (bench + headless-Chrome CDP scripts),
 keep results exact or document the trade-off, bump `TILE_ALGO` if worker output changes,
 re-run `bench/bench.js` (`class 0`), commit per phase, then comment on and close the issue.
 

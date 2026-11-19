@@ -329,6 +329,80 @@ function readParams() {
 // math; power!=2 falls back to direct double iteration (no precision at depth).
 const WORKER_SRC = `
 let REF = { Zx: null, Zy: null, refLen: 0 };
+let BLA_TABLES = new Map();   // dcMax bucket -> BLA table, for the current REF
+function setRef(r) { REF = { Zx: r.Zx, Zy: r.Zy, refLen: r.refLen, dcView: r.dcView || 0 }; BLA_TABLES = new Map(); }
+
+// --- Bilinear approximation (BLA, #7) ---
+// Near the reference, one perturbation step is dz' = A dz + B dc + dz² with
+// A = 2Z_m, B = 1. While |dz| is tiny next to |2Z_m|, the dz² term is below
+// rounding (relative error <= BLA_EPS), so the step is *linear* in (dz, dc),
+// and linear steps compose: x then y is A = Ay·Ax, B = Ay·Bx + By. A binary
+// tree of merged steps (level l = 2^l steps, starting at m = 1 + j·2^l) lets
+// one pixel skip thousands of iterations with one complex multiply-add.
+// R is the validity radius on |dz| at the start of the step; a merge keeps it
+// valid for every inner step: R = min(Rx, (Ry − |Bx|·|dc|max) / |Ax|). That
+// needs a bound on |dc|: the ref message carries one for the whole view
+// (dcView), so normally one table serves every tile; a tile past it (rare)
+// gets its own, per power-of-two bucket (rounded up = conservative).
+// Built in the worker from the ref message: O(refLen), ~6 ms at 20k.
+//
+// BLA_EPS trades speed for accuracy. Measured against full-BigInt iteration,
+// 2^-48 adds no error over plain perturbation; its deviation from the non-BLA
+// tile is ~0.6x what moving the reference 40 px already causes (chaotic
+// pixels are reference-dependent at that level). 2^-44 is at that noise floor,
+// 2^-40 is visibly past it. bench/bench.js has the test tiles.
+const BLA_EPS = 2 ** -48;
+const BLA_MAX_TABLES = 2;
+function blaTable(dcMax) {
+  const bucket = 2 ** Math.ceil(Math.log2(dcMax));
+  let t = BLA_TABLES.get(bucket);
+  if (t !== undefined) return t;
+  t = buildBLA(bucket);
+  if (BLA_TABLES.size >= BLA_MAX_TABLES) BLA_TABLES.delete(BLA_TABLES.keys().next().value);
+  BLA_TABLES.set(bucket, t);
+  return t;
+}
+function buildBLA(dcMax) {
+  const Zx = REF.Zx, Zy = REF.Zy;
+  const M = REF.refLen - 2;      // single steps from m = 1 .. refLen-2 (rebase fires at refLen-1)
+  if (!Zx || M < 2) return null;
+  // Level 0 (single steps) only seeds the merges: a single step is done exactly.
+  let Ar = new Float64Array(M), Ai = new Float64Array(M);
+  let Br = new Float64Array(M), Bi = new Float64Array(M), R = new Float64Array(M);
+  for (let j = 0; j < M; j++) {
+    const zx = Zx[j + 1], zy = Zy[j + 1];
+    Ar[j] = 2 * zx; Ai[j] = 2 * zy; Br[j] = 1; Bi[j] = 0;
+    R[j] = BLA_EPS * 2 * Math.sqrt(zx * zx + zy * zy);
+  }
+  // Levels >= 1 go into one flat array, 5 doubles per entry [Ar, Ai, Br, Bi, R²]
+  // (adjacent in memory per lookup); level l's entry k is at (off[l] + k) * 5.
+  let levels = 0, total = 0;
+  for (let n = M >> 1; n >= 1; n >>= 1) { levels++; total += n; }
+  const T = new Float64Array(total * 5);
+  const off = new Int32Array(levels + 2), cnt = new Int32Array(levels + 2);
+  let maxR2 = 0;   // over level 1 (see blaMaxR2)
+  for (let l = 1, n = M >> 1, base = 0; n >= 1; l++, n >>= 1) {
+    off[l] = base; cnt[l] = n;
+    const nAr = new Float64Array(n), nAi = new Float64Array(n);
+    const nBr = new Float64Array(n), nBi = new Float64Array(n), nR = new Float64Array(n);
+    for (let k = 0; k < n; k++) {
+      const x = 2 * k, y = x + 1;
+      const axr = Ar[x], axi = Ai[x], ayr = Ar[y], ayi = Ai[y];
+      const ar = ayr * axr - ayi * axi, ai = ayr * axi + ayi * axr;
+      const br = ayr * Br[x] - ayi * Bi[x] + Br[y], bi = ayr * Bi[x] + ayi * Br[x] + Bi[y];
+      const ax = Math.sqrt(axr * axr + axi * axi), bx = Math.sqrt(Br[x] * Br[x] + Bi[x] * Bi[x]);
+      let r = Math.min(R[x], Math.max(0, (R[y] - bx * dcMax) / ax));
+      if (!(r >= 0) || !isFinite(ar + ai + br + bi)) r = 0;   // NaN/overflow: never use
+      nAr[k] = ar; nAi[k] = ai; nBr[k] = br; nBi[k] = bi; nR[k] = r;
+      const e = (base + k) * 5;
+      T[e] = ar; T[e + 1] = ai; T[e + 2] = br; T[e + 3] = bi; T[e + 4] = r * r;
+      if (l === 1 && r * r > maxR2) maxR2 = r * r;
+    }
+    Ar = nAr; Ai = nAi; Br = nBr; Bi = nBi; R = nR;
+    base += n;
+  }
+  return { T, off, cnt, levels, maxR2 };
+}
 
 // A tile renders in ~25 ms slices (renderTile is a generator that yields per
 // row), so messages queued behind it — above all "cancel" for a tile the view
@@ -352,7 +426,7 @@ function step() {
 
 self.onmessage = function (e) {
   const m = e.data;
-  if (m.type === "ref") { REF = { Zx: m.Zx, Zy: m.Zy, refLen: m.refLen }; return; }
+  if (m.type === "ref") { setRef(m); return; }
   if (m.type === "verify") {
     // Recompute a few pixels of a downloaded tile; handled between slices of
     // whatever tile this worker is busy with (it's only a handful of pixels).
@@ -396,6 +470,15 @@ function makeSampler(j) {
   const left = j.left, top = j.top;   // absolute origin (direct iteration)
   const usePerturb = power === 2 && REF.Zx && tileScale < DIRECT_MIN_SCALE;
   const Zx = REF.Zx, Zy = REF.Zy, refLen = REF.refLen;
+  // |dc| bound over this tile (its far corner from the reference), for the BLA table.
+  const dcMaxX = Math.max(Math.abs(odx), Math.abs(odx + N * tileScale));
+  const dcMaxY = Math.max(Math.abs(ody), Math.abs(ody - N * tileScale));
+  const bla = usePerturb && j.bla !== false ? blaTable(Math.max(Math.hypot(dcMaxX, dcMaxY), REF.dcView)) : null;
+  const blaTop = bla ? Math.min(bla.levels, 30) : 0;
+  const blaT = bla ? bla.T : null, blaOff = bla ? bla.off : null, blaCnt = bla ? bla.cnt : null;
+  // dz grows from dc, so a pixel with |dc| past every level-1 radius can never
+  // take a BLA step: skip the per-step check (shallow perturbation tiles).
+  const blaMaxR2 = bla ? bla.maxR2 : 0;
 
   // Always returns the smooth/continuous value so toggling 'smooth' coloring is
   // free; the non-smooth look is recovered by flooring it at paint time.
@@ -438,6 +521,66 @@ function makeSampler(j) {
       // The state is (dz, refI) — only a full repeat proves a cycle.
       if (dzx === px && dzy === py && refI === pr) return -1;
       if (i === next) { px = dzx; py = dzy; pr = refI; next *= 2; }
+    }
+    return -1;
+  }
+
+  // --- The same with BLA steps (#7): a separate copy so pixels that can't
+  // use BLA keep the lean loop above (the extra checks cost ~13% there). ---
+  function perturbBLA(dcx, dcy) {
+    let dzx = 0, dzy = 0, refI = 0;
+    let px = NaN, py = NaN, pr = -1, next = 16, steps = 0;   // Brent snapshot of (dz, refI)
+    for (let i = 0; i < maxIter; steps++) {
+      const Zxr = Zx[refI], Zyr = Zy[refI];
+      const zx = Zxr + dzx, zy = Zyr + dzy;
+      const zmag2 = zx * zx + zy * zy;
+      if (zmag2 > escapeSq) {
+        const logZn = Math.log(zmag2) / 2;
+        return i + 1 - Math.log(logZn / lnEscape) / Math.LN2;
+      }
+      // BLA: take the largest tree step starting at refI that is valid for
+      // this dz and doesn't overrun maxIter. Inside a valid step |dz| << |Z|,
+      // so neither an escape nor a rebase can happen mid-skip. Searched
+      // bottom-up: level 1 fails for most steps far from the reference (one
+      // compare); on success, climb while the next level is aligned, still
+      // valid (validity only shrinks going up) and fits.
+      let l = 0;
+      const dz2 = dzx * dzx + dzy * dzy;
+      if ((refI & 1) === 1 && dz2 < blaMaxR2) {   // scalar pre-check: no table read once dz is large
+        const j0 = refI - 1, left = maxIter - i;
+        while (l < blaTop && ((j0 >> l) & 1) === 0 && (2 << l) <= left) {
+          const k = j0 >> (l + 1);
+          if (k >= blaCnt[l + 1] || !(dz2 < blaT[(blaOff[l + 1] + k) * 5 + 4])) break;
+          l++;
+        }
+        if (l > 0) {
+          const e = (blaOff[l] + (j0 >> l)) * 5;
+          const ar = blaT[e], ai = blaT[e + 1], br = blaT[e + 2], bi = blaT[e + 3];
+          const ndzx = ar * dzx - ai * dzy + br * dcx - bi * dcy;
+          dzy = ar * dzy + ai * dzx + br * dcy + bi * dcx;
+          dzx = ndzx;
+          refI += 1 << l; i += 1 << l;
+        }
+      }
+      if (l === 0) {
+        // dz_{n+1} = 2*Z_n*dz_n + dz_n^2 + dc
+        const ndzx = 2 * (Zxr * dzx - Zyr * dzy) + (dzx * dzx - dzy * dzy) + dcx;
+        const ndzy = 2 * (Zxr * dzy + Zyr * dzx) + (2 * dzx * dzy) + dcy;
+        dzx = ndzx; dzy = ndzy;
+        refI++; i++;
+      }
+      // Rebase, as in perturb().
+      if (refI >= refLen - 1) {
+        dzx = Zx[refI] + dzx; dzy = Zy[refI] + dzy; refI = 0;
+      } else {
+        const fzx = Zx[refI] + dzx, fzy = Zy[refI] + dzy;
+        if (fzx * fzx + fzy * fzy < dzx * dzx + dzy * dzy) {
+          dzx = fzx; dzy = fzy; refI = 0;
+        }
+      }
+      // The state is (dz, refI) — only a full repeat proves a cycle.
+      if (dzx === px && dzy === py && refI === pr) return -1;
+      if (steps === next) { px = dzx; py = dzy; pr = refI; next *= 2; }
     }
     return -1;
   }
@@ -488,7 +631,10 @@ function makeSampler(j) {
   }
 
   return usePerturb
-    ? (fx, fy) => perturb(odx + fx * tileScale, ody - fy * tileScale)
+    ? (fx, fy) => {
+        const dcx = odx + fx * tileScale, dcy = ody - fy * tileScale;
+        return dcx * dcx + dcy * dcy < blaMaxR2 ? perturbBLA(dcx, dcy) : perturb(dcx, dcy);
+      }
     : power === 2
       ? (fx, fy) => direct2(left + fx * tileScale, top - fy * tileScale)
       : (fx, fy) => iterate(left + fx * tileScale, top - fy * tileScale);
@@ -670,7 +816,8 @@ const INTERIOR_FILL = false;
 // it's part of every tile key, so stale IndexedDB tiles are never mixed with
 // new ones (that would show seams). a2: direct doubles at shallow zoom,
 // cardioid/bulb test, exact periodicity (+ "f" when the fill is on).
-const TILE_ALGO = INTERIOR_FILL ? "a2f" : "a2";
+// a3: bilinear approximation in the deep (perturbation) path.
+const TILE_ALGO = INTERIOR_FILL ? "a3f" : "a3";
 let paramHash = "";             // tiles are only reusable within the same iter params
 let currentCover = null;        // tiles covering the current view (for repaint)
 const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts }
@@ -1693,8 +1840,14 @@ function broadcastRef(gen, p) {
   const ref = p.power === 2
     ? computeReferenceOrbit(state.cx, state.cy, state.frac, p.maxIter, p.escapeR)
     : { Zx: null, Zy: null, refLen: 0 };
+  // |dc| bound for the BLA table: every cover tile intersects the view, so its
+  // far corner is within half the view diagonal plus one tile diagonal. One
+  // bound for the whole view = one table per worker (they're ~1 MB at 20k
+  // iterations, built in each worker).
+  const tileSpan = ROOT_SPAN / 2 ** pickLevel(state.spanW, p.pxW);
+  const dcView = Math.hypot(state.spanW, state.spanW * p.pxH / p.pxW) / 2 + Math.SQRT2 * tileSpan;
   for (const w of workers) {
-    w.postMessage({ type: "ref", gen, Zx: ref.Zx, Zy: ref.Zy, refLen: ref.refLen });
+    w.postMessage({ type: "ref", gen, Zx: ref.Zx, Zy: ref.Zy, refLen: ref.refLen, dcView });
   }
   refGen = gen;
 }

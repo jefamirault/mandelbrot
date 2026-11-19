@@ -9,6 +9,7 @@
 //   node bench/bench.js old.js     # any other copy, e.g. `git show HEAD~1:app.js > /tmp/old.js`
 //   ONLY=deep node bench/bench.js  # just the tiles whose name contains "deep"
 //   FILL=1 node bench/bench.js     # with Mariani–Silver interior fill (INTERIOR_FILL)
+//   NOBLA=1 node bench/bench.js    # perturbation without bilinear approximation
 //
 // Mismatch columns: "class" = pixels where interior/escaped disagree with the
 // reference; "maxΔ" = largest smooth-value difference among pixels both call
@@ -39,7 +40,9 @@ let posted = null;
 // a real port would keep Node's event loop alive. renderTile may be a generator
 // (sliced, current) or a plain function (older copies), so drain either.
 const stubChannel = function () { this.port1 = {}; this.port2 = { postMessage() {} }; };
-const worker = new Function("self", "MessageChannel", WORKER + "\nreturn { setRef: (r) => { REF = r; }, renderTile };")({
+// setRef (current) also drops the per-reference BLA tables; older copies just assign REF.
+const worker = new Function("self", "MessageChannel", WORKER +
+  "\nreturn { setRef: (r) => { if (typeof setRef === 'function') setRef(r); else REF = r; }, renderTile };")({
   postMessage: (m) => { if (m.final) posted = new Float32Array(m.iter); },
 }, stubChannel);
 function renderTile(job) {
@@ -82,7 +85,7 @@ function run(t) {
   const cxd = app.fpToDouble(cx, frac), cyd = app.fpToDouble(cy, frac);
   const job = {
     type: "tile", gen: 1, jobId: 0, key: "k", power: 2, maxIter: t.maxIter, escapeR: 2,
-    tilePx: N, tileScale, passes: [8, 2, 1], fill: !!process.env.FILL,
+    tilePx: N, tileScale, passes: [8, 2, 1], fill: !!process.env.FILL, bla: !process.env.NOBLA,
     tileOriginDx: -t.span / 2, tileOriginDy: t.span / 2,
     left: cxd - t.span / 2, top: cyd + t.span / 2,
   };
@@ -119,6 +122,10 @@ function run(t) {
 }
 
 const SEA = ["-0.743643887037158704752191506114774", "0.131825904205311970493132056385139"];
+const SPIRAL31 = ["-0.7436438870371587047521915199708286874999994793303155678641", "0.1318259042053119704931320608911936875000001953202443215150"];
+const SPIRAL40 = ["-0.7436438870371587047521915199707956716841791668275634318583", "0.1318259042053119704931320608911981716779298828206173005412"];
+const MB8007 = ["-0.743643887037158704752191506114779778215256207948181289816883901818560735783796478634787822",
+  "0.131825904205311970493132056385140678972952279328918966209127677465513481738298337234738964"];
 const TILES = [
   { name: "cardioid (all interior)", cx: "-0.25", cy: "0", span: 0.5, maxIter: 500, reps: 3 },
   { name: "cardioid @ maxIter 5000", cx: "-0.25", cy: "0", span: 0.5, maxIter: 5000 },
@@ -129,6 +136,13 @@ const TILES = [
   { name: "minibrot -1.7549 (interior)", cx: "-1.75487766624", cy: "0", span: 2e-6, maxIter: 2000 },
   { name: "deep minibrot interior 1e-14", cx: "-1.7548776662466927600495", cy: "0", span: 1e-14, maxIter: 3000, frac: 120 },
   { name: "deep 1e-25 @ 20000", cx: SEA[0], cy: SEA[1], span: 1e-25, maxIter: 20000, frac: 160, deep: true },
+  // Deeper boundary spirals (zoomed in from SEA toward high-escape pixels) and
+  // frames around the period-8007 minibrot near SEA (Newton nucleus), the
+  // case BLA is best at: escaping pixels shadow the periodic reference.
+  { name: "deep 1e-31 @ 30000", cx: SPIRAL31[0], cy: SPIRAL31[1], span: 1e-31, maxIter: 30000, frac: 220, deep: true },
+  { name: "deep 1e-40 @ 50000", cx: SPIRAL40[0], cy: SPIRAL40[1], span: 1e-40, maxIter: 50000, frac: 220, deep: true },
+  { name: "deep minibrot frame 1e-30", cx: MB8007[0], cy: MB8007[1], span: 1e-30, maxIter: 100000, frac: 260, deep: true },
+  { name: "deep minibrot 1e-32 (88% int)", cx: MB8007[0], cy: MB8007[1], span: 1e-32, maxIter: 100000, frac: 260, deep: true },
 ];
 console.log(`${path.relative(process.cwd(), file)} — 256×256 tile, one thread, passes [8,2,1]`);
 for (const t of TILES) if (!process.env.ONLY || t.name.includes(process.env.ONLY)) run(t);
