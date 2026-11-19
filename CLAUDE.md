@@ -82,7 +82,14 @@ the phase-1 work (track it in the BLA issue, #7).
   panning/re-centering, then dive. `zoomStep` still handles an arbitrary anchor
   (keep-anchor-point-fixed each frame from the live span) if cursor-anchoring is ever
   wanted back. Don't zoom by mutating `state.spanW` directly from the handler.
-- `tileToScratch` colorizes a tile's values into the shared `scratch` canvas before each blit.
+- **Draw cache** (`colorCache` / `tileCanvas`, #6): each finished tile is colorized once into
+  its own canvas and blitted with a plain `drawImage` (tiles, ancestor placeholders, fog
+  ghosts). `syncColorSig` (called by `render`/`repaint`) drops the cache whenever anything
+  `colorizePixels` reads changes: palette stops, cycles, offset, smooth, interior, maxIter.
+  Add any new coloring input to that signature. LRU-capped at ~2 screens
+  (`colorLimit`), with evicted canvases pooled. Progressive intermediate frames still go
+  through `colorizeToScratch` (uncached). A pan/zoom frame went from 18.6 ms to 0.5 ms at
+  1400×900, and from 52 ms to 1.0 ms at 2560×1440.
 
 ### Paint-to-reveal (shared "fog of war")
 - **Tiles compute only when visible.** `tileVisible(L, ix, iy)` = painted in *this* map,

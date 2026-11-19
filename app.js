@@ -1070,14 +1070,56 @@ function colorizeToScratch(iter) {
   sctx.putImageData(scratchImage, 0, 0);
   return scratch;
 }
-function tileToScratch(t) { return colorizeToScratch(t.iter); }
-// Blit a tile's iteration values to its viewport rect (+1 px overlap hides
-// sub-pixel seams). Used for finished tiles and progressive intermediate frames.
+
+// ---- Colorized-tile draw cache ----
+// Tile key -> a canvas holding that tile's RGBA pixels under the current
+// coloring. A blit is then a single drawImage instead of colorize +
+// putImageData every frame (pan/zoom glides blit every visible tile per
+// frame). Any change to what colorizePixels depends on (palette, cycles,
+// offset, smooth, interior, maxIter) changes colorSig and drops the lot;
+// tile keys already include paramHash, so values can't go stale under a key.
+// Evicted canvases are pooled, so steady-state glides allocate nothing.
+const colorCache = new Map();
+const colorPool = [];
+const COLOR_POOL_MAX = 32;
+let colorSig = "";
+// ~2 screens of tiles: the visible set plus room to pan back without recoloring.
+const colorLimit = () => Math.max(128, 2 * coverCount);
+function syncColorSig(p) {
+  const sig = `${p.maxIter}|${p.cycles}|${p.offset}|${p.smooth}|${p.interior}|${JSON.stringify(activeStops())}`;
+  if (sig === colorSig) return;
+  colorSig = sig;
+  for (const c of colorCache.values()) if (colorPool.length < COLOR_POOL_MAX) colorPool.push(c);
+  colorCache.clear();
+}
+function tileCanvas(t) {
+  let c = colorCache.get(t.key);
+  if (c) { colorCache.delete(t.key); colorCache.set(t.key, c); return c; }   // LRU touch
+  if (!(c = colorPool.pop())) {
+    c = document.createElement("canvas");
+    c.width = TILE_PX; c.height = TILE_PX;
+  }
+  colorizePixels(t.iter, TILE_PX * TILE_PX, renderParams, currentLut, scratchImage.data);
+  c.getContext("2d").putImageData(scratchImage, 0, 0);
+  colorCache.set(t.key, c);
+  while (colorCache.size > colorLimit()) {
+    const [k, old] = colorCache.entries().next().value;
+    colorCache.delete(k);
+    if (colorPool.length < COLOR_POOL_MAX) colorPool.push(old);
+  }
+  return c;
+}
+
+// Blit to a tile's viewport rect (+1 px overlap hides sub-pixel seams).
+// blitValues is for progressive intermediate frames (transient, not cached);
+// finished tiles go through the draw cache.
 function blitValues(d, iter) {
   const cnv = colorizeToScratch(iter);
   ctx.drawImage(cnv, 0, 0, TILE_PX, TILE_PX, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
 }
-function blitTile(d, t) { blitValues(d, t.iter); }
+function blitTile(d, t) {
+  ctx.drawImage(tileCanvas(t), 0, 0, TILE_PX, TILE_PX, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
+}
 // Until a tile is computed, upscale the nearest cached ancestor as a placeholder
 // (the instant blurry-zoom you get in map apps). Walk up to 8 levels. Only
 // ancestors revealed in this map qualify — the cache spans every room, and a
@@ -1092,8 +1134,7 @@ function blitPlaceholder(d) {
     const sub = TILE_PX / Math.pow(2, k);                 // ancestor sub-rect size
     const sx = Number(d.ix & mask) * sub;                 // & gives floor-mod (BigInt 2's-comp)
     const sy = Number(d.iy & mask) * sub;
-    const cnv = tileToScratch(at);
-    ctx.drawImage(cnv, sx, sy, sub, sub, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
+    ctx.drawImage(tileCanvas(at), sx, sy, sub, sub, d.destX, d.destY, d.destSize + 1, d.destSize + 1);
     return;
   }
   // No ancestor available: leave the existing backdrop (pan preview / prior frame).
@@ -1320,6 +1361,7 @@ function repaint() {
   if (!currentCover || !renderParams) return;
   renderParams = readParams();
   currentLut = buildPalette(activeStops());
+  syncColorSig(renderParams);
   for (const d of currentCover.tiles) {
     if (!tileVisible(d.L, d.ix, d.iy)) { blitUnexplored(d); continue; }
     const t = cacheGet(d.key);
@@ -1435,6 +1477,7 @@ function render(opts) {
   renderParams = p;
   paramHash = `${TILE_ALGO}|${p.power}|${p.escapeR}|${p.maxIter}`;
   currentLut = buildPalette(activeStops());
+  syncColorSig(p);
 
   // Tiles covering the view. Cached ones paint immediately; misses get an
   // upscaled-ancestor placeholder now and a worker job to compute the exact tile.
@@ -2166,7 +2209,7 @@ els.interiorColor.addEventListener("input", repaint);
 const info = {
   panel: $("infoPanel"), toggle: $("infoToggle"),
   cover: $("iCover"), level: $("iLevel"), hits: $("iHits"), renderMs: $("iRenderMs"),
-  mem: $("iMem"), memBar: $("iMemBar"), memMb: $("iMemMb"),
+  mem: $("iMem"), memBar: $("iMemBar"), memMb: $("iMemMb"), color: $("iColor"),
   workers: $("iWorkers"), workerDots: $("iWorkerDots"), workersMax: $("iWorkersMax"),
   pending: $("iPending"), queue: $("iQueue"),
   db: $("iDb"), dbBar: $("iDbBar"), dbMax: $("iDbMax"), dbClear: $("iDbClear"),
@@ -2213,6 +2256,7 @@ function updateInfoPanel() {
   info.mem.textContent = `${tileCache.size} / ${MAX_CACHE_TILES}`;
   info.memBar.style.width = `${Math.min(100, (tileCache.size / MAX_CACHE_TILES) * 100)}%`;
   info.memMb.textContent = `${(tileCache.size * TILE_MB).toFixed(1)} MB`;
+  info.color.textContent = `${colorCache.size} / ${colorLimit()}`;
 
   info.workers.textContent = `${busy} / ${NUM_WORKERS}`;
   const dots = info.workerDots.children;
