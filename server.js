@@ -27,6 +27,12 @@ const crypto = require("crypto");
 const PORT = Number(process.argv[2] || process.env.PORT || 8000);
 const ROOT = __dirname;
 const ROOMS_DIR = path.join(ROOT, "data", "rooms");
+// Shared computed tiles (#8): one file per (paramHash, key), shared by every
+// room (the math is the same), but only served to rooms that painted the key.
+const TILES_DIR = path.join(ROOT, "data", "tiles");
+const MAX_TILE_FILES = Number(process.env.MAX_TILE_FILES) || 5000;    // ~0.1–0.15 MB each → ≤ ~0.7 GB
+const TILE_BYTES = 256 * 256 * 4;               // one Float32 tile, uncompressed
+const PARAM_HASH_RE = /^[A-Za-z0-9.|+-]{1,64}$/;
 const CREATE_KEY = process.env.ROOM_CREATE_KEY || "";
 
 // Key = "L:ix:iy" in decimal. ix/iy are BigInt-sized at deep zoom, hence the
@@ -37,6 +43,7 @@ const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";   // no 0/O/1/I/L confu
 const MAX_BODY = 1024 * 1024;
 const MAX_KEYS_PER_PAINT = 2000;
 const MAX_BUDGET = 1e6;
+const zlib = require("zlib");
 
 const sha = (s) => crypto.createHash("sha256").update(String(s)).digest("hex");
 const newToken = () => crypto.randomBytes(16).toString("hex");
@@ -53,6 +60,8 @@ function blankRoom(code) {
   return {
     code, name: "", hostHash: "", startBudget: 0, created: 0,
     keySet: new Set(), keyList: [],         // painted set; index = sync cursor
+    tileSet: new Set(), tileList: [],       // shared tiles available to this room ("h|k"); index = cursor
+    params: null,                           // pinned iteration params { maxIter, escapeR, power } or null
     players: new Map(),                     // id -> { id, name, tokenHash, budget, spent, found }
     tokens: new Map(),                      // tokenHash -> player id
     objectives: new Map(),                  // id -> { id, name, note, key, L, created, foundBy, foundAt }
@@ -69,9 +78,11 @@ function apply(room, ev) {
     case "room":
       room.name = ev.name; room.hostHash = ev.hostHash;
       room.startBudget = ev.startBudget; room.created = ev.t;
+      room.params = ev.params || null;
       break;
     case "settings":
       if (ev.startBudget != null) room.startBudget = ev.startBudget;
+      if (ev.params != null) room.params = ev.params;
       if (ev.name != null) room.name = ev.name;
       break;
     case "join": {
@@ -92,6 +103,11 @@ function apply(room, ev) {
         o.foundBy = ev.p; o.foundAt = ev.t;
         if (p) p.found++;
       }
+      break;
+    }
+    case "tile": {
+      const hk = `${ev.h}|${ev.k}`;
+      if (!room.tileSet.has(hk)) { room.tileSet.add(hk); room.tileList.push({ h: ev.h, k: ev.k }); }
       break;
     }
     case "grant":
@@ -131,6 +147,9 @@ function commit(room, events) {
 }
 
 fs.mkdirSync(ROOMS_DIR, { recursive: true });
+fs.mkdirSync(TILES_DIR, { recursive: true });
+let tileFileCount = fs.readdirSync(TILES_DIR).filter((f) => f.endsWith(".gz")).length;
+const tileFile = (h, k) => path.join(TILES_DIR, sha(`${h}|${k}`).slice(0, 40) + ".gz");
 for (const f of fs.readdirSync(ROOMS_DIR)) {
   const m = /^([A-Z0-9]{5})\.jsonl$/.exec(f);
   if (!m) continue;
@@ -164,12 +183,15 @@ function objectiveView(room, o) {
     found: !!o.foundBy, foundBy: o.foundBy ? playerName(room, o.foundBy) : null, foundAt: o.foundAt,
   };
 }
-function stateView(room, auth, since) {
+function stateView(room, auth, since, tsince) {
   const s = Math.max(0, Math.min(room.keyList.length, Number(since) || 0));
+  const ts = Math.max(0, Math.min(room.tileList.length, Number(tsince) || 0));
   const objs = [...room.objectives.values()];
   const view = {
     code: room.code, name: room.name, startBudget: room.startBudget,
     seq: room.keyList.length, keys: room.keyList.slice(s),
+    params: room.params,
+    tileSeq: room.tileList.length, tiles: room.tileList.slice(ts),
     objectiveCount: objs.length,
     // Students only ever see found treasures; the host sees all of them.
     objectives: objs.filter((o) => auth.host || o.foundBy).map((o) => objectiveView(room, o)),
@@ -231,6 +253,30 @@ function json(res, code, obj) {
   res.writeHead(code, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
   res.end(JSON.stringify(obj));
 }
+// Raw (binary) request body, capped.
+function readRaw(req, res, max, cb) {
+  const chunks = [];
+  let size = 0;
+  req.on("data", (c) => {
+    size += c.length;
+    if (size > max) { json(res, 413, { error: "too large" }); req.destroy(); return; }
+    chunks.push(c);
+  });
+  req.on("end", () => {
+    if (res.writableEnded) return;
+    try { cb(Buffer.concat(chunks)); }
+    catch (e) { console.error(e); if (!res.writableEnded) json(res, 500, { error: "server error" }); }
+  });
+}
+function cleanParams(p) {
+  if (!p || typeof p !== "object") return null;
+  const maxIter = clampInt(p.maxIter, 1, 100000);
+  const escapeR = Number(p.escapeR), power = Number(p.power);
+  if (!Number.isFinite(escapeR) || escapeR <= 0 || escapeR > 1e6) return null;
+  if (!Number.isFinite(power) || Math.abs(power) > 64) return null;
+  return { maxIter, escapeR, power };
+}
+
 function readBody(req, res, cb) {
   let body = "";
   req.on("data", (c) => {
@@ -270,7 +316,7 @@ function handleApi(req, res, url) {
       const code = newCode();
       const hostToken = newToken();
       const room = blankRoom(code);
-      commit(room, [{ e: "room", name, hostHash: sha(hostToken), startBudget }]);
+      commit(room, [{ e: "room", name, hostHash: sha(hostToken), startBudget, params: cleanParams(data.params) }]);
       rooms.set(code, room);
       return json(res, 200, { code, hostToken, name });
     });
@@ -326,7 +372,43 @@ function handleApi(req, res, url) {
 
   // GET /api/rooms/:code/state?since=N — painted keys since the cursor + roster.
   if (action === "state" && req.method === "GET") {
-    return json(res, 200, stateView(room, auth, url.searchParams.get("since")));
+    return json(res, 200, stateView(room, auth, url.searchParams.get("since"), url.searchParams.get("tsince")));
+  }
+
+  // GET|PUT /api/rooms/:code/tile?h=<paramHash>&k=<L:ix:iy> — shared computed
+  // tiles. Body = the tile's Float32 bytes split into 4 byte planes, gzipped
+  // (the client's CompressionStream). Only for keys painted in this room, so a
+  // download can never reveal fogged area. Write-once: the first upload wins
+  // (clients spot-check downloads against their own compute anyway).
+  if (action === "tile" && (req.method === "GET" || req.method === "PUT")) {
+    const h = url.searchParams.get("h") || "", k = url.searchParams.get("k") || "";
+    if (!PARAM_HASH_RE.test(h) || !KEY_RE.test(k)) return json(res, 400, { error: "bad tile id" });
+    if (!room.keySet.has(k)) return json(res, 403, { error: "tile not revealed in this room" });
+    const file = tileFile(h, k);
+    if (req.method === "GET") {
+      if (!room.tileSet.has(`${h}|${k}`)) return json(res, 404, { error: "not shared" });
+      return fs.readFile(file, (err, buf) => {
+        if (err) return json(res, 404, { error: "not shared" });
+        res.writeHead(200, { "Content-Type": "application/octet-stream", "Cache-Control": "private, max-age=31536000, immutable" });
+        res.end(buf);
+      });
+    }
+    return readRaw(req, res, TILE_BYTES + 4096, (buf) => {
+      const listed = () => {
+        if (!room.tileSet.has(`${h}|${k}`)) commit(room, [{ e: "tile", h, k }]);
+        json(res, 200, { ok: true });
+      };
+      if (fs.existsSync(file)) return listed();          // someone else's copy wins
+      if (tileFileCount >= MAX_TILE_FILES) return json(res, 507, { error: "tile store full" });
+      let raw;
+      try { raw = zlib.gunzipSync(buf, { maxOutputLength: TILE_BYTES + 1 }); } catch (e) { raw = null; }
+      if (!raw || raw.length !== TILE_BYTES) return json(res, 400, { error: "not a gzipped tile" });
+      const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;   // atomic: no half-written tile is ever served
+      fs.writeFileSync(tmp, buf);
+      fs.renameSync(tmp, file);
+      tileFileCount++;
+      return listed();
+    });
   }
 
   // POST /api/rooms/:code/paint {keys} — spend budget on unpainted keys.
@@ -395,12 +477,17 @@ function handleApi(req, res, url) {
       return json(res, 200, { ok: true });
     });
   }
-  // POST /api/rooms/:code/settings {startBudget?, name?}
+  // POST /api/rooms/:code/settings {startBudget?, name?, params?}
   if (action === "settings" && req.method === "POST") {
     return readBody(req, res, (data) => {
       const ev = { e: "settings" };
       if (data.startBudget != null) ev.startBudget = clampInt(data.startBudget, 0, MAX_BUDGET);
       if (data.name != null && cleanText(data.name, 60)) ev.name = cleanText(data.name, 60);
+      if (data.params != null) {
+        const pp = cleanParams(data.params);
+        if (!pp) return json(res, 400, { error: "bad iteration params" });
+        ev.params = pp;
+      }
       commit(room, [ev]);
       return json(res, 200, { ok: true });
     });

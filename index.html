@@ -78,6 +78,7 @@
           <div class="info-row"><span>Sync</span><b id="iSync">–</b></div>
           <div class="info-row"><span>Painted tiles</span><b id="iPainted">0</b></div>
           <div class="info-row"><span>Explored in view</span><b id="iExplored">0 / 0</b></div>
+          <div class="info-row"><span>Shared tiles ↓ / ↑</span><b id="iShared">0 / 0</b></div>
         </section>
 
         <section class="info-group">
@@ -134,6 +135,10 @@
         </label>
         <button type="button" id="objAdd" class="small-btn">☆ Hide treasure here</button>
         <div id="objList" class="game-list"></div>
+
+        <h5 class="sub-head">Iteration settings</h5>
+        <p class="help">Students use these, so the room computes the same tiles and shares the expensive ones. Now: <b id="roomParams">–</b></p>
+        <button type="button" id="pinParams" class="small-btn">Use my current settings for the class</button>
 
         <h5 class="sub-head">Paint budget</h5>
         <label>Starting paint for new students

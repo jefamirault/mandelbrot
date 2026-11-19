@@ -173,6 +173,24 @@ the phase-1 work (track it in the BLA issue, #7).
   found ones plus `objectiveCount`; the host gets all. The server refuses to hide one on an
   already-revealed tile, which is why the host has **X-ray** (`xray` → `tileVisible` true
   everywhere, local only, never pushed) to scout without revealing.
+- **Pinned iteration params** (`room.params`, set at creation from the teacher's fields and
+  via "Use my current settings for the class"): students' maxIter / escape / power fields
+  follow them and are disabled (`applyRoomParams`), so the whole room shares one
+  `paramHash`, which is what makes shared tiles hit.
+- **Shared computed tiles (#8).** A tile that took ≥ `SHARE_MIN_MS` (200 ms) to compute is
+  uploaded (`maybeShare`: Float32 bytes split into 4 byte planes, then gzip via
+  `CompressionStream`, ~40–56% of 256 KB) with `PUT api/rooms/<CODE>/tile?h=<paramHash>&k=<key>`.
+  Cheaper tiles aren't worth a round trip. The server stores one file per (paramHash, key)
+  in `data/tiles/`, shared by all rooms. It's write-once, capped by `MAX_TILE_FILES`
+  (default 5000), only accepted and served for keys painted in *that* room (no fog leak),
+  and listed per room through `tile` events in the room log. The poll returns new
+  listings (`tsince` cursor → `game.sharedTiles`), so `resolveMisses` only downloads tiles
+  that exist. Cold tiles go straight to compute. Every download is **spot-checked**
+  (`verifyTile`): a worker recomputes 6 pixels from the coarsest pass's grid with the same
+  `makeSampler`. Perturbation makes values depend slightly on the reference at chaotic
+  pixels, so it tolerates 1e-3 relative error and one outlier. A failure → compute
+  locally. Known gap: a bad first upload stays (write-once), so that tile just never
+  shares.
 - `drawObjectiveMarkers` (end of `drawExploreOverlay`) draws a star + tile outline per known
   objective, positioned by fixed-point subtraction at `max(state.frac, L + 10)` bits so a
   deep objective places correctly from a shallow view. `flyToTile` frames a key at exactly

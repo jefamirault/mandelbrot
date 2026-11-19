@@ -353,6 +353,14 @@ function step() {
 self.onmessage = function (e) {
   const m = e.data;
   if (m.type === "ref") { REF = { Zx: m.Zx, Zy: m.Zy, refLen: m.refLen }; return; }
+  if (m.type === "verify") {
+    // Recompute a few pixels of a downloaded tile; handled between slices of
+    // whatever tile this worker is busy with (it's only a handful of pixels).
+    const sample = makeSampler(m.job), N = m.job.tilePx;
+    const values = m.idx.map((i) => sample((i % N) + 0.5, Math.floor(i / N) + 0.5));
+    self.postMessage({ type: "verified", id: m.id, values });
+    return;
+  }
   if (m.type === "cancel") {
     // Only if it's still ours: if the tile already finished, its final result
     // is on the way and the main thread frees the worker on that instead.
@@ -372,7 +380,10 @@ self.onmessage = function (e) {
 // the cardioid/bulb test, which needs an absolute c.
 const DIRECT_MIN_SCALE = 1e-12;
 
-function* renderTile(j) {
+// Pixel sampler for one tile job: (fx, fy) in tile pixels -> smooth iteration
+// value (-1 = interior). Shared by renderTile and the shared-tile spot check
+// ("verify"), so a verified pixel runs exactly the code that rendered it.
+function makeSampler(j) {
   const maxIter = j.maxIter, power = j.power;
   const escapeSq = j.escapeR * j.escapeR;
   const lnEscape = Math.log(j.escapeR);
@@ -385,8 +396,6 @@ function* renderTile(j) {
   const left = j.left, top = j.top;   // absolute origin (direct iteration)
   const usePerturb = power === 2 && REF.Zx && tileScale < DIRECT_MIN_SCALE;
   const Zx = REF.Zx, Zy = REF.Zy, refLen = REF.refLen;
-  const iter = new Float32Array(N * N);
-  const known = new Uint8Array(N * N);   // 1 = actually computed (not replicated/filled)
 
   // Always returns the smooth/continuous value so toggling 'smooth' coloring is
   // free; the non-smooth look is recovered by flooring it at paint time.
@@ -478,11 +487,19 @@ function* renderTile(j) {
     return i + 1 - Math.log(logZn / lnEscape) / lnPow;
   }
 
-  const sample = usePerturb
+  return usePerturb
     ? (fx, fy) => perturb(odx + fx * tileScale, ody - fy * tileScale)
     : power === 2
       ? (fx, fy) => direct2(left + fx * tileScale, top - fy * tileScale)
       : (fx, fy) => iterate(left + fx * tileScale, top - fy * tileScale);
+}
+
+function* renderTile(j) {
+  const t0 = performance.now();
+  const N = j.tilePx;
+  const sample = makeSampler(j);
+  const iter = new Float32Array(N * N);
+  const known = new Uint8Array(N * N);   // 1 = actually computed (not replicated/filled)
 
   // Value of grid point (gx, gy) at stride s: computed once ever (the known
   // mask carries coarse-pass samples into finer passes), and block-replicated
@@ -565,7 +582,8 @@ function* renderTile(j) {
       yield* mariani(0, 0, G - 1, G - 1, s);
     }
     if (pi === passes.length - 1) {
-      self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer, final: true }, [iter.buffer]);
+      // ms (wall time) lets the main thread share only tiles worth downloading.
+      self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer, final: true, ms: performance.now() - t0 }, [iter.buffer]);
     } else {
       // Intermediate frame: send a copy so the worker keeps refining its buffer.
       const copy = new Float32Array(iter);
@@ -837,6 +855,9 @@ const game = {
   remaining: 0,                     // optimistic: server value minus unsent paints
   startBudget: 0, players: [], objectives: [], objectiveCount: 0,
   foundSeen: null,                  // objective ids already announced (null until first sync)
+  params: null,                     // teacher-pinned { maxIter, escapeR, power } (null = unpinned)
+  sharedTiles: new Set(),           // "paramHash|L:ix:iy" the server can serve (#8)
+  tileSeq: 0,                       // cursor into the room's shared-tile list
 };
 let xray = false;                   // host only: see through fog locally (never shared)
 
@@ -967,7 +988,7 @@ async function pollRoom() {
   if (game.mode !== "room" || document.hidden) return;
   let data;
   try {
-    data = await api("GET", roomUrl(`state?since=${paintedSeq}`));
+    data = await api("GET", roomUrl(`state?since=${paintedSeq}&tsince=${game.tileSeq}`));
   } catch (e) {
     syncStatus = "offline — retrying";
     if (e.status === 401 || e.status === 404) leaveRoom(e.status === 404 ? "That room no longer exists." : "Please join the room again.");
@@ -991,7 +1012,10 @@ async function pollRoom() {
     paintedSeq = seq;
     savePainted();
   }
+  for (const t of data.tiles || []) game.sharedTiles.add(`${t.h}|${t.k}`);
+  if (Number.isFinite(Number(data.tileSeq))) game.tileSeq = Number(data.tileSeq);
   setObjectives(data.objectives || []);
+  applyRoomParams(data.params);
   if (fresh.size) revealPainted(fresh);
   updateGameHud();
   renderGamePanel();
@@ -1024,6 +1048,26 @@ function announceDiscovery(o) {
   const who = mine ? "You" : o.foundBy;
   toast(`★ ${who} discovered “${o.name}”!${o.note ? " " + o.note : ""}`, mine ? "win" : "info", 9000);
 }
+// Teacher-pinned iteration params: students' fields follow them and are
+// locked, so the whole room computes (and shares) the same tiles.
+function applyRoomParams(pp) {
+  game.params = pp || null;
+  const lock = !!pp && !game.isHost && game.mode === "room";
+  for (const el of [els.maxIter, els.escapeR, els.power]) {
+    el.disabled = lock;
+    el.title = lock ? "Set by your teacher for the whole room" : "";
+  }
+  if (!lock) return;
+  let changed = false;
+  for (const [el, v] of [[els.maxIter, pp.maxIter], [els.escapeR, pp.escapeR], [els.power, pp.power]]) {
+    if (Number(el.value) !== v) { el.value = v; changed = true; }
+  }
+  if (changed && renderParams) render();
+}
+const currentIterParams = () => ({
+  maxIter: Number(els.maxIter.value), escapeR: Number(els.escapeR.value), power: Number(els.power.value),
+});
+
 function parseTileKey(key) {
   const [L, ix, iy] = key.split(":");
   return { L: Number(L), ix: BigInt(ix), iy: BigInt(iy) };
@@ -1502,6 +1546,11 @@ function cancelUnwanted(wanted) {
 }
 
 function onWorkerDone(w, data) {
+  if (data.type === "verified") {
+    const done = verifyWaits.get(data.id);
+    if (done) { verifyWaits.delete(data.id); done(data.values); }
+    return;
+  }
   if (data.type === "cancelled") {
     inFlight.delete(data.key);
     pumpWorker(w);
@@ -1525,6 +1574,7 @@ function onWorkerDone(w, data) {
     persistTile(t);                 // write-through to IndexedDB
     sessionComputed++;
     settlePending(data.key, t);
+    maybeShare(t, data.ms);
   }
   pumpWorker(w);
 }
@@ -1625,7 +1675,7 @@ function render(opts) {
   hydrateFromDB(misses, gen).then((stillMissing) => {
     if (gen !== currentGen) return;     // view moved on while we awaited the DB
     if (stillMissing.length === 0) { finishRender(); return; }
-    enqueueCompute(stillMissing, gen, p, centerXd, centerYd);
+    resolveMisses(stillMissing, gen, p, centerXd, centerYd);
   });
 
   if (computeCount === 0) { overlay.hidden = true; finishRender(); }
@@ -1652,6 +1702,17 @@ function broadcastRef(gen, p) {
 // Compute the given missing tiles on the worker pool (perturbation reference is
 // shared across the batch — iteration values don't depend on which reference
 // produced them, so the view-center orbit serves every tile).
+// The worker message for one cover tile (also reused by the shared-tile spot check).
+function tileJob(d, gen, p, centerXd, centerYd) {
+  return {
+    type: "tile", gen, key: d.key,
+    power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
+    tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES, fill: INTERIOR_FILL,
+    tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
+    left: centerXd + d.odx, top: centerYd + d.ody,       // absolute origin (direct iteration)
+  };
+}
+
 function enqueueCompute(misses, gen, p, centerXd, centerYd) {
   if (gen !== currentGen || misses.length === 0) return;
   // Center-out: the tile under the reticle first, then by distance from it.
@@ -1666,14 +1727,10 @@ function enqueueCompute(misses, gen, p, centerXd, centerYd) {
     pendingTiles++;
     const f = inFlight.get(d.key);
     if (f && !f.cancelling) continue;   // already computing: its result settles this pending key
-    jobs.push({
+    jobs.push(Object.assign(tileJob(d, gen, p, centerXd, centerYd), {
       meta: { L: d.L, ix: d.ix, iy: d.iy, paramHash },   // kept on the main thread (see pumpWorker)
-      type: "tile", gen, jobId: jobId++, key: d.key,
-      power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
-      tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES, fill: INTERIOR_FILL,
-      tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
-      left: centerXd + d.odx, top: centerYd + d.ody,       // absolute origin (direct iteration)
-    });
+      jobId: jobId++,
+    }));
   }
   if (jobs.length) {
     broadcastRef(gen, p);           // before any of this gen's tile messages
@@ -1683,6 +1740,144 @@ function enqueueCompute(misses, gen, p, centerXd, centerYd) {
   idleWorkers = [];
   for (const w of idle) pumpWorker(w);
   startLoadAnim();   // spinners run until pendingKeys drains (worker results land)
+}
+
+// ---------- Shared computed tiles (#8) ----------
+// In a room, expensive tiles (took >= SHARE_MIN_MS) are uploaded once and
+// downloaded by everyone else instead of recomputed. Cheap tiles aren't worth
+// a round trip (most shallow tiles compute in a few ms since #4). The room
+// poll lists what the server has (game.sharedTiles), so a tile is only
+// requested when it exists — cold tiles go straight to compute, no 404 wait.
+// Encoding: Float32 bytes split into 4 byte planes (exponent bytes line up:
+// ~2x better gzip, still lossless), gzipped with CompressionStream.
+// Downloads are spot-checked: a worker recomputes a few pixels with the same
+// sampler. Values depend slightly on the reference orbit at chaotic pixels
+// (perturbation), so the check tolerates small differences and one outlier.
+const SHARE_MIN_MS = 200;
+const SHARE_OK = typeof CompressionStream === "function" && typeof DecompressionStream === "function";
+const VERIFY_PIXELS = 6;
+const shareStats = { down: 0, up: 0, rejected: 0 };
+const downloading = new Set();      // "paramHash|L:ix:iy"
+const uploading = new Set();
+let verifySeq = 0;
+const verifyWaits = new Map();      // id -> resolve(values)
+
+async function encodeTile(iter) {
+  const src = new Uint8Array(iter.buffer, iter.byteOffset, iter.byteLength), n = iter.length;
+  const planes = new Uint8Array(src.length);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    planes[i] = src[o]; planes[n + i] = src[o + 1]; planes[2 * n + i] = src[o + 2]; planes[3 * n + i] = src[o + 3];
+  }
+  return new Response(new Blob([planes]).stream().pipeThrough(new CompressionStream("gzip"))).arrayBuffer();
+}
+async function decodeTile(buf) {
+  const planes = new Uint8Array(await new Response(
+    new Blob([buf]).stream().pipeThrough(new DecompressionStream("gzip"))).arrayBuffer());
+  const n = TILE_PX * TILE_PX;
+  if (planes.length !== n * 4) throw new Error("bad tile size");
+  const out = new Uint8Array(n * 4);
+  for (let i = 0; i < n; i++) {
+    const o = i * 4;
+    out[o] = planes[i]; out[o + 1] = planes[n + i]; out[o + 2] = planes[2 * n + i]; out[o + 3] = planes[3 * n + i];
+  }
+  return new Float32Array(out.buffer);
+}
+const tileUrl = (h, pk) => roomUrl(`tile?h=${encodeURIComponent(h)}&k=${pk}`);
+function tokenHeaders() {
+  const h = apiHeaders();
+  delete h["Content-Type"];
+  return h;
+}
+
+// Recompute VERIFY_PIXELS pixels from the coarsest pass's grid (always sampled
+// directly, even with INTERIOR_FILL) and compare. Pass: same class (interior or
+// not) and within tolerance for all but at most one pixel.
+function verifyTile(d, iter) {
+  const N = TILE_PX, s = PROGRESSIVE_PASSES[0], G = N / s;
+  const idx = [];
+  for (let k = 0; k < VERIFY_PIXELS; k++) {
+    idx.push(Math.floor(Math.random() * G) * s * N + Math.floor(Math.random() * G) * s);
+  }
+  broadcastRef(currentGen, renderParams);
+  const job = tileJob(d, currentGen, renderParams, lastCenter.x, lastCenter.y);
+  const w = workers[verifySeq % workers.length];
+  const id = ++verifySeq;
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => { verifyWaits.delete(id); resolve(false); }, 10000);
+    verifyWaits.set(id, (values) => {
+      clearTimeout(timer);
+      let bad = 0;
+      values.forEach((v, i) => {
+        const g = iter[idx[i]];
+        if ((v < 0) !== (g < 0) || (v >= 0 && Math.abs(v - g) > 1e-3 * Math.max(1, v))) bad++;
+      });
+      resolve(bad <= 1);
+    });
+    w.postMessage({ type: "verify", id, job, idx });
+  });
+}
+
+// Route the misses left after IndexedDB: downloadable ones to the server,
+// ones already downloading just wait, everything else to compute.
+function resolveMisses(misses, gen, p, centerXd, centerYd) {
+  const compute = [];
+  for (const d of misses) {
+    const hk = `${paramHash}|${paintedKeyOf(d)}`;
+    if (game.mode === "room" && SHARE_OK && (downloading.has(hk) || game.sharedTiles.has(hk))) {
+      if (!pendingKeys.has(d.key)) {
+        pendingKeys.add(d.key); pendingDesc.set(d.key, d); pendingTiles++;
+      }
+      if (!downloading.has(hk)) downloadTile(d.key, hk);
+    } else compute.push(d);
+  }
+  if (compute.length) enqueueCompute(compute, gen, p, centerXd, centerYd);
+  else if (misses.length) startLoadAnim();
+}
+async function downloadTile(key, hk) {
+  downloading.add(hk);
+  startLoadAnim();
+  const h = hk.slice(0, hk.lastIndexOf("|")), pk = hk.slice(hk.lastIndexOf("|") + 1);
+  let iter = null;
+  try {
+    const res = await fetch(tileUrl(h, pk), { headers: tokenHeaders() });
+    if (res.ok) iter = await decodeTile(await res.arrayBuffer());
+  } catch (e) { iter = null; }
+  // Verify against the *current* view's descriptor and reference orbit; if the
+  // view no longer wants the tile, drop it (it can't be checked meaningfully).
+  if (iter && pendingKeys.has(key) && h === paramHash) {
+    if (!(await verifyTile(pendingDesc.get(key), iter))) { iter = null; shareStats.rejected++; }
+  } else iter = null;
+  downloading.delete(hk);
+  if (!pendingKeys.has(key)) return;
+  const d = pendingDesc.get(key);
+  if (iter) {
+    const t = { key, iter, L: d.L, ix: d.ix, iy: d.iy, paramHash: h, ts: Date.now() };
+    cachePut(t);
+    persistTile(t);
+    shareStats.down++;
+    settlePending(key, t);
+  } else {
+    // Missing, corrupt or failed the check: compute it here instead.
+    pendingKeys.delete(key);
+    pendingTiles--;
+    enqueueCompute([d], currentGen, renderParams, lastCenter.x, lastCenter.y);
+  }
+}
+// After computing an expensive tile, offer it to the room. A fresh paint may
+// not have reached the server yet (paints are batched), so a 403 retries once.
+function maybeShare(t, ms) {
+  if (game.mode !== "room" || !SHARE_OK || !(ms >= SHARE_MIN_MS)) return;
+  const pk = `${t.L}:${t.ix}:${t.iy}`, hk = `${t.paramHash}|${pk}`;
+  if (!painted.has(pk) || game.sharedTiles.has(hk) || uploading.has(hk)) return;
+  uploading.add(hk);
+  const put = (body, retry) => fetch(tileUrl(t.paramHash, pk), {
+    method: "PUT", headers: Object.assign(tokenHeaders(), { "Content-Type": "application/octet-stream" }), body,
+  }).then((r) => {
+    if (r.ok) { game.sharedTiles.add(hk); shareStats.up++; }
+    else if (r.status === 403 && retry) return new Promise((ok) => setTimeout(ok, 2000)).then(() => put(body, false));
+  });
+  encodeTile(t.iter).then((body) => put(body, true)).catch(() => {}).finally(() => uploading.delete(hk));
 }
 
 // ---------- Interactions ----------
@@ -1731,7 +1926,7 @@ function resolveTile(d) {
   const gen = currentGen;
   hydrateFromDB([d], gen).then((still) => {
     if (gen !== currentGen) return;
-    enqueueCompute(still, gen, renderParams, lastCenter.x, lastCenter.y);
+    resolveMisses(still, gen, renderParams, lastCenter.x, lastCenter.y);
   });
 }
 
@@ -2326,7 +2521,7 @@ const info = {
   pending: $("iPending"), queue: $("iQueue"),
   db: $("iDb"), dbBar: $("iDbBar"), dbMax: $("iDbMax"), dbClear: $("iDbClear"),
   gen: $("iGen"), computed: $("iComputed"), tier: $("iTier"), limits: $("iLimits"),
-  sync: $("iSync"), painted: $("iPainted"), explored: $("iExplored"),
+  sync: $("iSync"), painted: $("iPainted"), explored: $("iExplored"), shared: $("iShared"),
 };
 
 // Float32 values per tile, in MB — the dominant memory cost of the LRU.
@@ -2385,6 +2580,7 @@ function updateInfoPanel() {
 
   info.sync.textContent = syncStatus;
   info.painted.textContent = painted.size;
+  info.shared.textContent = `${shareStats.down} / ${shareStats.up}` + (shareStats.rejected ? ` (${shareStats.rejected} rejected)` : "");
   let explored = 0;
   if (currentCover) {
     for (const d of currentCover.tiles) if (painted.has(paintedKeyOf(d))) explored++;
@@ -2453,6 +2649,7 @@ const g = {
   hostLink: $("hostLink"), copyHost: $("copyHost"), xray: $("xray"),
   hostLevel: $("hostLevel"), objName: $("objName"), objNote: $("objNote"), objAdd: $("objAdd"),
   objList: $("objList"), startBudget: $("startBudget"), grantAmt: $("grantAmt"), grantAll: $("grantAll"),
+  roomParams: $("roomParams"), pinParams: $("pinParams"),
   paintBadge: $("paintBadge"), toasts: $("toasts"), sub: $("headerSub"),
 };
 
@@ -2513,6 +2710,7 @@ g.createForm.addEventListener("submit", async (e) => {
   try {
     const data = await api("POST", "api/rooms", {
       name: g.createName.value, startBudget: Number(g.createBudget.value),
+      params: currentIterParams(),     // pinned for the class (teacher can change it later)
       createKey: g.createKey.value || undefined,
     });
     const s = { hostToken: data.hostToken };
@@ -2534,8 +2732,9 @@ function resetGame() {
   Object.assign(game, {
     mode: null, code: "", roomName: "", name: "", playerId: "", token: "", hostToken: "",
     isHost: false, remaining: 0, startBudget: 0, players: [], objectives: [],
-    objectiveCount: 0, foundSeen: null,
+    objectiveCount: 0, foundSeen: null, params: null, sharedTiles: new Set(), tileSeq: 0,
   });
+  applyRoomParams(null);   // unlock the iteration fields
   xray = false; g.xray.checked = false;
 }
 async function enterRoom(code, sess) {
@@ -2689,6 +2888,8 @@ function renderHostPanel() {
   g.joinLink.value = base;
   g.hostLink.value = `${base}&host=${game.hostToken}`;
   if (document.activeElement !== g.startBudget) g.startBudget.value = game.startBudget;
+  const pp = game.params;
+  g.roomParams.textContent = pp ? `max iterations ${pp.maxIter} · escape ${pp.escapeR} · power ${pp.power}` : "not pinned (each student's own)";
   g.objList.replaceChildren();
   if (!game.objectives.length) g.objList.append(el("p", "empty-note", "No treasures yet."));
   for (const o of game.objectives) {
@@ -2719,6 +2920,13 @@ async function grant(player) {
   } catch (err) { toast(err.message, "warn"); }
 }
 g.grantAll.addEventListener("click", () => grant("*"));
+g.pinParams.addEventListener("click", async () => {
+  try {
+    await api("POST", roomUrl("settings"), { params: currentIterParams() });
+    toast("Students now use your iteration settings.", "info");
+    pollRoom();
+  } catch (err) { toast(err.message, "warn"); }
+});
 g.grantAmt.addEventListener("change", renderGamePanel);
 g.startBudget.addEventListener("change", async () => {
   try { await api("POST", roomUrl("settings"), { startBudget: Number(g.startBudget.value) }); pollRoom(); }
