@@ -285,7 +285,12 @@ report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
   Palette changes are *not* in the key (they recolor via `repaint`).
 - Hybrid resampling slightly blurs tiles when the view scale doesn't exactly match the chosen
   level's; `pickLevel` rounds to keep it minimal.
-- Cache bounds are tunable: `MAX_CACHE_TILES` (memory LRU) and `DB_MAX` (IndexedDB prune).
+- Cache bounds come from the **`DEVICE` profile** (#10): the tier from `navigator.deviceMemory`
+  (Chromium only; elsewhere coarse pointer = assumed 2 GB, else 8 GB) sets
+  `MAX_CACHE_TILES` (96/192/384), the default `DB_MAX` (400/800/1500), the draw-cache floor,
+  the default worker cap, and `PROGRESSIVE_PASSES` (low tier skips the middle pass). A
+  persisted panel setting (workers, DB max) wins. Battery saver (`getBattery`: discharging
+  and ≤ 20 %) halves the default pool. Shown under "Device profile" in the panel.
 - IndexedDB on some `file://` origins is blocked/opaque → automatic memory-only fallback.
 - Paints made while the API is unreachable sit in `pushQueue` (retried each poll) but are
   lost if the tab closes first — the tiles stay revealed locally, just never shared (and

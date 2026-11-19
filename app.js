@@ -575,6 +575,31 @@ function* renderTile(j) {
 }
 `;
 
+// ---------- Device profile (#10) ----------
+// One place that sizes everything memory- or CPU-bound. navigator.deviceMemory
+// (GB, Chromium only, coarsely rounded) picks the tier; elsewhere a
+// coarse pointer is treated as a phone (2 GB) and anything else as a desktop.
+// Tile values are 256 KB each (Float32), colored tiles another 256 KB, so the
+// high tier's 384-tile cache alone is ~96 MB — too much for many phones.
+const DEVICE = (() => {
+  const coarse = !!(window.matchMedia && matchMedia("(pointer: coarse)").matches);
+  const reported = navigator.deviceMemory;
+  const mem = reported || (coarse ? 2 : 8);
+  const tier = mem <= 2 ? "low" : mem <= 4 ? "mid" : "high";
+  return {
+    coarse, mem, memReported: !!reported, tier,
+    cacheTiles: { low: 96, mid: 192, high: 384 }[tier],
+    dbMax: { low: 400, mid: 800, high: 1500 }[tier],
+    colorMin: { low: 48, mid: 96, high: 128 }[tier],
+    // Phones/tablets throttle hard under sustained all-core load; 4 keeps them
+    // responsive. Low-memory desktops get 2 (each worker holds tile buffers).
+    maxWorkers: coarse ? 4 : tier === "low" ? 2 : 32,
+    // Low tier skips the middle preview pass: each intermediate frame costs a
+    // 256 KB copy + a colorize + a blit per tile.
+    passes: tier === "low" ? [8, 1] : [8, 2, 1],
+  };
+})();
+
 // ---------- Worker pool ----------
 // hardwareConcurrency reports logical *threads* (e.g. 32 on a 24-core/32-thread
 // hybrid CPU), not physical cores. Default to all-but-one — leave a thread for
@@ -582,14 +607,12 @@ function* renderTile(j) {
 // CPU-bound, so the optimum is roughly the core count and best found empirically
 // (hyperthreads and E-cores scale sublinearly), hence the panel control.
 const MAX_WORKERS = 64;
-// Persisted choice wins; otherwise the smart default (all-but-one, capped at 32).
+// Persisted choice wins; otherwise the smart default (all-but-one, capped by
+// the device profile).
+const DEFAULT_WORKERS = Math.max(2, Math.min(DEVICE.maxWorkers, (navigator.hardwareConcurrency || 4) - 1));
 let NUM_WORKERS = SETTINGS.workers != null
   ? Math.max(1, Math.min(MAX_WORKERS, SETTINGS.workers))
-  : Math.max(2, Math.min(
-      // Phones/tablets throttle hard under sustained all-core load; 4 keeps
-      // them responsive (still adjustable in the panel).
-      window.matchMedia && matchMedia("(pointer: coarse)").matches ? 4 : 32,
-      (navigator.hardwareConcurrency || 4) - 1));
+  : DEFAULT_WORKERS;
 
 let workers = [];
 let idleWorkers = [];
@@ -613,12 +636,12 @@ let currentLut = null;
 // ============================================================================
 const TILE_PX = 256;            // pyramid tile resolution (px per side)
 const ROOT_SPAN = 4;            // world span of level 0 (contains the whole set)
-const MAX_CACHE_TILES = 384;    // in-memory LRU bound (~100 MB of Float32 values)
+const MAX_CACHE_TILES = DEVICE.cacheTiles;   // in-memory LRU bound (256 KB of Float32 values each)
 // Progressive tile passes: coarse subsample → finer, painted as they arrive so a
 // deep wheel-zoom shows a blocky preview within a few ms instead of a blank tile.
 // Strides must each divide the previous (so no pixel is computed twice); the last
 // must be 1 (the exact full-res pass that gets cached).
-const PROGRESSIVE_PASSES = [8, 2, 1];
+const PROGRESSIVE_PASSES = DEVICE.passes;
 
 // Mariani–Silver interior fill (see fillInterior in WORKER_SRC). Off = exact:
 // every pixel matches brute-force iteration. On = ~1.6x faster on boundary
@@ -696,7 +719,7 @@ function cachePut(t) {
 // store can't be opened (some file:// configurations).
 // ============================================================================
 const DB_NAME = "mandelbrot-tiles", DB_STORE = "tiles";
-let DB_MAX = SETTINGS.dbMax != null ? Math.max(1, SETTINGS.dbMax) : 1500;  // IndexedDB prune target; editable + persisted
+let DB_MAX = SETTINGS.dbMax != null ? Math.max(1, SETTINGS.dbMax) : DEVICE.dbMax;  // IndexedDB prune target; editable + persisted
 // Always resolves (to the db, or null for memory-only) — never rejects, so the
 // await in hydrateFromDB can't throw if indexedDB is missing/blocked (the open
 // call itself can throw synchronously on some file:// origins).
@@ -1124,7 +1147,7 @@ const colorPool = [];
 const COLOR_POOL_MAX = 32;
 let colorSig = "";
 // ~2 screens of tiles: the visible set plus room to pan back without recoloring.
-const colorLimit = () => Math.max(128, 2 * coverCount);
+const colorLimit = () => Math.max(DEVICE.colorMin, 2 * coverCount);
 function syncColorSig(p) {
   const sig = `${p.maxIter}|${p.cycles}|${p.offset}|${p.smooth}|${p.interior}|${JSON.stringify(activeStops())}`;
   if (sig === colorSig) return;
@@ -2302,7 +2325,7 @@ const info = {
   workers: $("iWorkers"), workerDots: $("iWorkerDots"), workersMax: $("iWorkersMax"),
   pending: $("iPending"), queue: $("iQueue"),
   db: $("iDb"), dbBar: $("iDbBar"), dbMax: $("iDbMax"), dbClear: $("iDbClear"),
-  gen: $("iGen"), computed: $("iComputed"),
+  gen: $("iGen"), computed: $("iComputed"), tier: $("iTier"), limits: $("iLimits"),
   sync: $("iSync"), painted: $("iPainted"), explored: $("iExplored"),
 };
 
@@ -2380,11 +2403,13 @@ info.workersMax.addEventListener("change", () => {
   info.workersMax.value = v;
   saveSetting("workers", v);
   if (v !== NUM_WORKERS) setWorkerCount(v);
+  renderDeviceInfo();
 });
 info.dbMax.addEventListener("change", () => {
   const v = Math.max(1, Math.round(+info.dbMax.value) || DB_MAX);
   DB_MAX = v;
   info.dbMax.value = v;
+  renderDeviceInfo();
   saveSetting("dbMax", v);
   dbReady.then((db) => { if (db) maybePrune(db); });   // lowering it kicks off a prune
 });
@@ -2780,3 +2805,29 @@ render();
 // Lobby / room / solo. In a room, the first poll lands before the settling
 // render, so the painted set is current when the cover resolves.
 boot();
+
+// ---- Device profile readout + battery saver ----
+let batterySaver = false;
+function renderDeviceInfo() {
+  info.tier.textContent = `${DEVICE.tier} (${DEVICE.memReported ? DEVICE.mem + " GB" : "assumed " + DEVICE.mem + " GB"})` +
+    (batterySaver ? " · battery saver" : "");
+  info.limits.textContent = `${MAX_CACHE_TILES} · ${DB_MAX} · ${NUM_WORKERS}`;
+}
+renderDeviceInfo();
+// On a discharging battery at ≤ 20 %, halve the pool — only while the user
+// hasn't chosen a worker count. getBattery is Chromium-only; elsewhere no-op.
+if (navigator.getBattery && SETTINGS.workers == null) {
+  navigator.getBattery().then((b) => {
+    const apply = () => {
+      const saver = !b.charging && b.level <= 0.2;
+      if (saver === batterySaver || SETTINGS.workers != null) return;
+      batterySaver = saver;
+      setWorkerCount(saver ? Math.max(1, Math.floor(DEFAULT_WORKERS / 2)) : DEFAULT_WORKERS);
+      info.workersMax.value = NUM_WORKERS;
+      renderDeviceInfo();
+    };
+    b.addEventListener("chargingchange", apply);
+    b.addEventListener("levelchange", apply);
+    apply();
+  }).catch(() => { /* blocked by permissions policy */ });
+}
