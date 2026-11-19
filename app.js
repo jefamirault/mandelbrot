@@ -336,6 +336,12 @@ self.onmessage = function (e) {
   renderTile(m);
 };
 
+// Below this tile pixel size, plain doubles can't resolve neighboring pixels'
+// orbits reliably (catastrophic cancellation in c), so switch to perturbation.
+// Above it, direct iteration is ~2x faster than perturbation and also enables
+// the cardioid/bulb test, which needs an absolute c.
+const DIRECT_MIN_SCALE = 1e-12;
+
 function renderTile(j) {
   const maxIter = j.maxIter, power = j.power;
   const escapeSq = j.escapeR * j.escapeR;
@@ -346,17 +352,26 @@ function renderTile(j) {
   // tile origin's offset (small doubles built via fixed-point on the main
   // thread), so we never form an absolute coordinate (catastrophic at depth).
   const odx = j.tileOriginDx, ody = j.tileOriginDy;
-  const left = j.left, top = j.top;   // absolute origin, fallback (power!=2) only
-  const usePerturb = (power === 2 && REF.Zx);
+  const left = j.left, top = j.top;   // absolute origin (direct iteration)
+  const usePerturb = power === 2 && REF.Zx && tileScale < DIRECT_MIN_SCALE;
   const Zx = REF.Zx, Zy = REF.Zy, refLen = REF.refLen;
   const iter = new Float32Array(N * N);
+  const known = new Uint8Array(N * N);   // 1 = actually computed (not replicated/filled)
 
   // Always returns the smooth/continuous value so toggling 'smooth' coloring is
   // free; the non-smooth look is recovered by flooring it at paint time.
+  //
+  // Periodicity checks below are *exact*: they fire only when the full
+  // iteration state repeats bit-for-bit (Brent: compare against a snapshot
+  // taken at doubling intervals). The arithmetic is deterministic, so a
+  // repeated state can never escape — the result is identical to running all
+  // maxIter iterations, just without the wait. Interior pixels are the
+  // dominant cost (every one runs to maxIter), so this matters a lot.
 
   // --- Perturbation + rebasing: delta orbit relative to the reference. ---
   function perturb(dcx, dcy) {
     let dzx = 0, dzy = 0, refI = 0;
+    let px = NaN, py = NaN, pr = -1, next = 16;   // Brent snapshot of (dz, refI)
     for (let i = 0; i < maxIter; i++) {
       const Zxr = Zx[refI], Zyr = Zy[refI];
       const zx = Zxr + dzx, zy = Zyr + dzy;
@@ -381,14 +396,39 @@ function renderTile(j) {
           dzx = fzx; dzy = fzy; refI = 0;
         }
       }
+      // The state is (dz, refI) — only a full repeat proves a cycle.
+      if (dzx === px && dzy === py && refI === pr) return -1;
+      if (i === next) { px = dzx; py = dzy; pr = refI; next *= 2; }
     }
     return -1;
   }
 
-  // --- Direct iteration (used for power != 2). ---
+  // --- Direct iteration, power 2 (shallow zoom). Same escape index and
+  // smoothing formula as perturb(), so the two modes agree at the switchover.
+  function direct2(cx, cy) {
+    // Main cardioid / period-2 bulb: closed-form interior test, no iterating.
+    const xq = cx - 0.25, y2 = cy * cy;
+    const q = xq * xq + y2;
+    if (q * (q + xq) <= 0.25 * y2 || (cx + 1) * (cx + 1) + y2 <= 0.0625) return -1;
+    let zx = 0, zy = 0, px = NaN, py = NaN, next = 16;
+    for (let i = 0; i < maxIter; i++) {
+      const x2 = zx * zx, yy = zy * zy;
+      if (x2 + yy > escapeSq) {
+        const logZn = Math.log(x2 + yy) / 2;
+        return i + 1 - Math.log(logZn / lnEscape) / Math.LN2;
+      }
+      zy = 2 * zx * zy + cy;
+      zx = x2 - yy + cx;
+      if (zx === px && zy === py) return -1;
+      if (i === next) { px = zx; py = zy; next *= 2; }
+    }
+    return -1;
+  }
+
+  // --- Direct iteration, general power (no deep precision). ---
   function iterate(cx, cy) {
     let zx = 0, zy = 0, i = 0;
-    let mag2 = 0;
+    let mag2 = 0, px = NaN, py = NaN, next = 16;
     while (i < maxIter) {
       const r = Math.sqrt(zx * zx + zy * zy);
       if (r > 0) {
@@ -400,38 +440,96 @@ function renderTile(j) {
       mag2 = zx * zx + zy * zy;
       i++;
       if (mag2 > escapeSq) break;
+      if (zx === px && zy === py) return -1;
+      if (i === next) { px = zx; py = zy; next *= 2; }
     }
     if (i >= maxIter && mag2 <= escapeSq) return -1;
     const logZn = Math.log(mag2) / 2;
     return i + 1 - Math.log(logZn / lnEscape) / lnPow;
   }
 
-  // Progressive refinement: compute a coarse subsample first (block-replicated so
-  // the tile already looks complete), then fill in finer grids. Each stride
-  // divides the previous, so the skip test computes every pixel exactly once
-  // across all passes (no redundant work) — the final tile is identical to a
-  // single full-res pass. The intermediate frames give an instant low-res preview
-  // for the case the cheap ancestor placeholder can't cover: a big wheel-zoom that
-  // jumps past every cached level, where otherwise you'd stare at a blank tile.
-  const passes = (j.passes && j.passes.length) ? j.passes : [1];
   const sample = usePerturb
     ? (fx, fy) => perturb(odx + fx * tileScale, ody - fy * tileScale)
-    : (fx, fy) => iterate(left + fx * tileScale, top - fy * tileScale);
-  let prev = 0;
-  for (let pi = 0; pi < passes.length; pi++) {
-    const s = passes[pi];
-    for (let ty = 0; ty < N; ty += s) {
-      for (let tx = 0; tx < N; tx += s) {
-        if (prev && tx % prev === 0 && ty % prev === 0) continue;  // done in a coarser pass
-        const v = sample(tx + 0.5, ty + 0.5);
-        const yEnd = ty + s < N ? ty + s : N, xEnd = tx + s < N ? tx + s : N;
-        for (let by = ty; by < yEnd; by++) {
+    : power === 2
+      ? (fx, fy) => direct2(left + fx * tileScale, top - fy * tileScale)
+      : (fx, fy) => iterate(left + fx * tileScale, top - fy * tileScale);
+
+  // Value of grid point (gx, gy) at stride s: computed once ever (the known
+  // mask carries coarse-pass samples into finer passes), and block-replicated
+  // over its s×s cell so intermediate frames look complete.
+  function point(gx, gy, s) {
+    const x = gx * s, y = gy * s, k = y * N + x;
+    if (!known[k]) {
+      const v = sample(x + 0.5, y + 0.5);
+      iter[k] = v; known[k] = 1;
+      if (s > 1) {
+        const yEnd = Math.min(y + s, N), xEnd = Math.min(x + s, N);
+        for (let by = y; by < yEnd; by++) {
           const row = by * N;
-          for (let bx = tx; bx < xEnd; bx++) iter[row + bx] = v;  // block-replicate
+          for (let bx = x; bx < xEnd; bx++) if (!known[row + bx]) iter[row + bx] = v;
         }
       }
     }
-    prev = s;
+    return iter[k];
+  }
+
+  // Mariani–Silver on the stride-s grid: compute a rectangle's border; if every
+  // border point is interior, the inside is interior too (M is full: its
+  // complement is connected, so escaping points can't be enclosed by interior
+  // ones). Otherwise split in four and recurse. Only interior regions are
+  // filled — smooth coloring makes escaped pixels all distinct. Caveat: border
+  // points are samples, so an escaping filament thinner than a pixel that
+  // slips between two of them can be filled over (the standard trade-off).
+  function fillInterior(gx0, gy0, gx1, gy1, s) {
+    for (let gy = gy0 + 1; gy < gy1; gy++) {        // a computed escaped point inside vetoes the fill
+      for (let gx = gx0 + 1; gx < gx1; gx++) {
+        const k = gy * s * N + gx * s;
+        if (known[k] && iter[k] >= 0) return false;
+      }
+    }
+    const y0 = (gy0 + 1) * s, y1 = gy1 * s, x0 = (gx0 + 1) * s, x1 = gx1 * s;
+    for (let y = y0; y < y1; y++) {
+      const row = y * N;
+      for (let x = x0; x < x1; x++) if (!known[row + x]) iter[row + x] = -1;
+    }
+    return true;
+  }
+  function mariani(gx0, gy0, gx1, gy1, s) {
+    let allIn = true;
+    for (let gx = gx0; gx <= gx1; gx++) {
+      if (point(gx, gy0, s) >= 0) allIn = false;
+      if (point(gx, gy1, s) >= 0) allIn = false;
+    }
+    for (let gy = gy0 + 1; gy < gy1; gy++) {
+      if (point(gx0, gy, s) >= 0) allIn = false;
+      if (point(gx1, gy, s) >= 0) allIn = false;
+    }
+    if (gx1 - gx0 < 2 || gy1 - gy0 < 2) return;     // no inside left
+    if (allIn && fillInterior(gx0, gy0, gx1, gy1, s)) return;
+    if (gx1 - gx0 < 4 || gy1 - gy0 < 4) {           // small: just compute the inside
+      for (let gy = gy0 + 1; gy < gy1; gy++) for (let gx = gx0 + 1; gx < gx1; gx++) point(gx, gy, s);
+      return;
+    }
+    const gxm = (gx0 + gx1) >> 1, gym = (gy0 + gy1) >> 1;   // children share edges (no recompute: known mask)
+    mariani(gx0, gy0, gxm, gym, s); mariani(gxm, gy0, gx1, gym, s);
+    mariani(gx0, gym, gxm, gy1, s); mariani(gxm, gym, gx1, gy1, s);
+  }
+
+  // Progressive refinement: coarse stride first (block-replicated so the tile
+  // already looks complete), then finer. The first pass is a plain subsample
+  // (cheap, 1/s² of the pixels); with j.fill, later passes run Mariani–Silver
+  // on their grid. Either way every point computed before is reused. Each stride divides the previous, so
+  // no pixel is computed twice. The intermediate frames give an instant
+  // low-res preview for the case the ancestor placeholder can't cover: a big
+  // wheel-zoom that jumps past every cached level.
+  const passes = (j.passes && j.passes.length) ? j.passes : [1];
+  for (let pi = 0; pi < passes.length; pi++) {
+    const s = passes[pi], G = Math.ceil(N / s);
+    if ((pi === 0 && passes.length > 1) || !j.fill) {
+      for (let gy = 0; gy < G; gy++) for (let gx = 0; gx < G; gx++) point(gx, gy, s);
+    } else {
+      mariani(0, 0, G - 1, G - 1, s);
+    }
     if (pi === passes.length - 1) {
       self.postMessage({ jobId: j.jobId, gen: j.gen, key: j.key, iter: iter.buffer, final: true }, [iter.buffer]);
     } else {
@@ -488,6 +586,16 @@ const MAX_CACHE_TILES = 384;    // in-memory LRU bound (~100 MB of Float32 value
 // must be 1 (the exact full-res pass that gets cached).
 const PROGRESSIVE_PASSES = [8, 2, 1];
 
+// Mariani–Silver interior fill (see fillInterior in WORKER_SRC). Off = exact:
+// every pixel matches brute-force iteration. On = ~1.6x faster on boundary
+// tiles, but ~50 per million pixels (escaping filaments thinner than a pixel)
+// come out interior. Measured with bench/ on 40 random boundary tiles.
+const INTERIOR_FILL = false;
+// Bump whenever the worker's output values could change (even by rounding):
+// it's part of every tile key, so stale IndexedDB tiles are never mixed with
+// new ones (that would show seams). a2: direct doubles at shallow zoom,
+// cardioid/bulb test, exact periodicity (+ "f" when the fill is on).
+const TILE_ALGO = INTERIOR_FILL ? "a2f" : "a2";
 let paramHash = "";             // tiles are only reusable within the same iter params
 let currentCover = null;        // tiles covering the current view (for repaint)
 const tileCache = new Map();    // key -> { key, iter, L, ix, iy, paramHash, ts }
@@ -954,10 +1062,12 @@ function drawRemoteHovers() {
 
 // ---- Painting a tile (and placeholders) onto the viewport ----
 // Colorize a cached tile's iteration values into the scratch canvas.
+// One reusable ImageData: putImageData copies it, so there's no need to
+// allocate 256 KB per blit (that was every tile, every animation frame).
+const scratchImage = new ImageData(TILE_PX, TILE_PX);
 function colorizeToScratch(iter) {
-  const out = new Uint8ClampedArray(TILE_PX * TILE_PX * 4);
-  colorizePixels(iter, TILE_PX * TILE_PX, renderParams, currentLut, out);
-  sctx.putImageData(new ImageData(out, TILE_PX, TILE_PX), 0, 0);
+  colorizePixels(iter, TILE_PX * TILE_PX, renderParams, currentLut, scratchImage.data);
+  sctx.putImageData(scratchImage, 0, 0);
   return scratch;
 }
 function tileToScratch(t) { return colorizeToScratch(t.iter); }
@@ -1323,7 +1433,7 @@ function render(opts) {
   updateZoomBadge();
 
   renderParams = p;
-  paramHash = `${p.power}|${p.escapeR}|${p.maxIter}`;
+  paramHash = `${TILE_ALGO}|${p.power}|${p.escapeR}|${p.maxIter}`;
   currentLut = buildPalette(activeStops());
 
   // Tiles covering the view. Cached ones paint immediately; misses get an
@@ -1409,7 +1519,7 @@ function enqueueCompute(misses, gen, p, centerXd, centerYd) {
     jobQueue.push({
       type: "tile", gen, jobId: jobId++, key: d.key,
       power: p.power, maxIter: p.maxIter, escapeR: p.escapeR,
-      tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES,
+      tilePx: TILE_PX, tileScale: d.tileScale, passes: PROGRESSIVE_PASSES, fill: INTERIOR_FILL,
       tileOriginDx: d.odx, tileOriginDy: d.ody,           // perturbation dc origin
       left: centerXd + d.odx, top: centerYd + d.ody,       // fallback absolute origin
     });

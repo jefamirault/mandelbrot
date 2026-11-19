@@ -28,10 +28,14 @@ In production nginx serves the static files and proxies only the API:
 smoke-tests `/api/` through nginx: a JSON 404 is healthy, nginx's HTML 404 means the proxy
 is missing, and 502 means the service is down.
 
-There is no test suite in-repo. To verify the math, write a throwaway Node script that
-copies the fixed-point + perturbation functions and compares against either direct
-double iteration (shallow zoom) or full-BigInt iteration (deep zoom). The perturbation
-path has been checked to match exact BigInt iteration with zero mismatches at 1e-16…1e-25.
+There is no test suite, but `node bench/bench.js` runs the real `WORKER_SRC` and the
+reference-orbit code on fixed tiles (interior, boundary, outside, deep), times them, and
+checks every pixel against brute-force iteration (direct doubles shallow; sparse
+full-BigInt deep). Run it before and after any worker change; `node bench/bench.js
+old.js` benchmarks another copy (`git show HEAD:app.js > old.js`), and `ONLY=` / `FILL=1`
+filter tiles and enable the interior fill. Expect `class 0` everywhere in exact mode. The
+deep 1e-25 tile shows a smooth-value maxΔ of ~33 at a few chaotic pixels; that predates
+the phase-1 work (track it in the BLA issue, #7).
 `node --check app.js` after any edit.
 
 ## Architecture
@@ -171,6 +175,25 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   nginx the `/api/` location needs `proxy_buffering off` (see deploy.sh). If SSE fails,
   presence is just empty.
 
+### Tile compute shortcuts (WORKER_SRC, perf phase 1 / #4)
+- **Direct doubles above `DIRECT_MIN_SCALE` (1e-12 per pixel)**: `direct2()`. ~2x faster
+  than perturbation at shallow zoom, and it has an absolute c, which enables the
+  **cardioid + period-2 bulb test** (closed form, no iterating). Below that scale,
+  perturbation. The mode is decided per tile from `tileScale`, so a whole level uses one
+  mode (no seams inside a level).
+- **Exact periodicity** (Brent snapshots at doubling intervals) in all three loops: it
+  fires only when the *full* iteration state repeats bit-for-bit (`(dz, refI)` in
+  `perturb`), so the result is identical to running maxIter. Interior pixels were the
+  dominant cost.
+- **Mariani–Silver interior fill** (`mariani` / `fillInterior`), off by default
+  (`INTERIOR_FILL`). It's faster on boundary and deep-interior tiles, but misclassifies
+  ~50 per million pixels (escaping filaments thinner than a pixel). Exact mode has 0.
+- **`TILE_ALGO` is part of `paramHash`** (so of every tile key and IDB record). Bump it
+  whenever worker output could change, even by rounding, or old cached tiles mix with
+  new ones and show seams.
+- `point()` + the `known` mask carry samples from coarse passes into finer ones, so no
+  pixel is computed twice.
+
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
 - The view **center** is stored in high precision as BigInt fixed-point (`state.cx/cy`,
@@ -226,8 +249,8 @@ report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
   has focus (typing spaces in inputs must not arm panning).
 - **Wheel only zooms when the cursor is over the canvas**; otherwise it returns early so
   the controls panel scrolls normally. The page itself never scrolls (`body { overflow:hidden }`).
-- The reference orbit runs on the **main thread**, so a very high max-iter at extreme zoom
-  briefly freezes the UI before workers take over. Candidate to move into a worker.
+- The reference orbit runs on the **main thread**. Measured, it's cheap (~10 ms at 20k
+  iterations, 160-bit), so moving it to a worker is low priority (#5).
 
 ## Conventions
 - Plain ES (`"use strict"`), no modules, no transpile. Keep it dependency-free and
