@@ -345,3 +345,155 @@ button.ghost { background: transparent; }
 .stop-row input[type="range"] { flex: 1; }
 .stop-row .pos { width: 38px; text-align: right; font-size: 0.75rem; color: var(--muted); }
 .stop-row button { padding: 4px 8px; font-size: 0.8rem; line-height: 1; }
+
+/* ===================== Game: HUD, toasts, room + teacher panels, lobby ===================== */
+[hidden] { display: none !important; }
+
+/* Paint budget pill, under the zoom badge. */
+.paint-badge {
+  position: fixed;
+  top: 58px;
+  right: 348px;
+  z-index: 5;
+  padding: 7px 13px;
+  font-size: 0.85rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: #1a1300;
+  background: var(--accent);
+  border-radius: 999px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+.paint-badge.low { background: #ff8a3d; }
+.paint-badge.empty { background: #e5484d; color: #fff; }
+.paint-badge.host { background: rgba(200, 150, 255, 0.9); color: #1a0d2e; }
+
+/* Toasts: bottom-center stack above the hint bar, newest at the bottom
+   (the top edge is busy with the header and badges). */
+.toasts {
+  position: fixed;
+  bottom: 64px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 30;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  width: min(520px, calc(100vw - 32px));
+  pointer-events: none;
+}
+.toast {
+  padding: 10px 16px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  line-height: 1.35;
+  color: var(--text);
+  background: rgba(27, 31, 41, 0.92);
+  border: 1px solid var(--border);
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  animation: toast-in 0.25s ease-out;
+  transition: opacity 0.4s, transform 0.4s;
+}
+.toast.warn { border-color: #e5484d; }
+.toast.win { border-color: #ffd250; background: rgba(60, 46, 8, 0.95); font-weight: 600; }
+.toast.out { opacity: 0; transform: translateY(6px); }
+@keyframes toast-in { from { opacity: 0; transform: translateY(8px); } }
+
+.room-code {
+  font-family: ui-monospace, monospace;
+  letter-spacing: 0.12em;
+  color: var(--text);
+  margin-left: 4px;
+}
+.room-name { font-weight: 600; margin: 2px 0 8px; }
+.sub-head {
+  margin: 14px 0 6px;
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--muted);
+}
+.help { margin: 0 0 4px; font-size: 0.76rem; color: var(--muted); line-height: 1.4; }
+.empty-note { margin: 0; font-size: 0.78rem; color: var(--muted); font-style: italic; }
+.small-btn { width: 100%; margin-top: 10px; padding: 7px 10px; font-size: 0.85rem; }
+
+.game-list { display: flex; flex-direction: column; gap: 4px; margin-top: 4px; max-height: 220px; overflow-y: auto; }
+.disc-row .go, .obj-row .go {
+  width: 100%;
+  text-align: left;
+  padding: 5px 8px;
+  font-size: 0.82rem;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+.star { color: #ffd250; }
+.obj-row:not(.found) .star { color: #c896ff; }
+.by { color: var(--muted); }
+.note { margin: 2px 8px 4px; font-size: 0.75rem; color: var(--muted); line-height: 1.35; }
+.obj-row { display: flex; gap: 6px; align-items: center; }
+.obj-row .go { flex: 1; }
+.obj-row .del { padding: 4px 9px; font-size: 0.8rem; line-height: 1; color: var(--muted); }
+
+.player-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px;
+  font-size: 0.8rem;
+  border-radius: 4px;
+}
+.player-row.me { background: rgba(255, 179, 71, 0.12); }
+.player-row .pname { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.player-row .pstat { color: var(--muted); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.player-row .pstat.left { color: var(--text); }
+button.mini { padding: 2px 7px; font-size: 0.75rem; }
+
+.copy-row { display: flex; gap: 6px; }
+.copy-row input { flex: 1; min-width: 0; font-size: 0.78rem; }
+.copy-row button { padding: 5px 10px; font-size: 0.8rem; }
+.host-link { margin-top: 10px; font-size: 0.8rem; color: var(--muted); }
+.host-link summary { cursor: pointer; margin-bottom: 6px; }
+.grant-row { display: flex; gap: 6px; margin-top: 8px; }
+.grant-row input { width: 5em; flex: 0 0 auto; }
+.grant-row button { flex: 1; padding: 7px 10px; font-size: 0.85rem; }
+
+/* Lobby: full-screen dim over the fogged map. */
+.lobby {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 16px;
+  background: rgba(4, 6, 12, 0.6);
+  overflow-y: auto;
+}
+.lobby-card {
+  width: min(420px, 100%);
+  padding: 22px 24px;
+  background: rgba(27, 31, 41, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
+}
+.lobby-card h2 { margin: 0 0 6px; font-size: 1.4rem; }
+.lobby-card h3 { margin: 0; font-size: 0.8rem; color: var(--accent); text-transform: uppercase; letter-spacing: 0.05em; }
+.lobby-intro { margin: 0 0 16px; color: var(--muted); font-size: 0.88rem; line-height: 1.45; }
+.lobby-form { display: flex; flex-direction: column; gap: 2px; }
+.lobby-form button { margin-top: 12px; }
+.lobby-form input[type="password"] {
+  background: var(--panel-2); border: 1px solid var(--border); color: var(--text);
+  padding: 7px 9px; border-radius: 6px; font-size: 0.9rem; width: 100%;
+}
+.code-input { font-family: ui-monospace, monospace; text-transform: uppercase; letter-spacing: 0.2em; font-size: 1.1rem !important; }
+.lobby-create { margin-top: 16px; padding-top: 12px; border-top: 1px solid var(--border); }
+.lobby-create summary { cursor: pointer; color: var(--muted); font-size: 0.85rem; }
+.lobby-error { min-height: 1.2em; margin: 10px 0 0; color: #ff7b7f; font-size: 0.85rem; }
+.solo-btn { width: 100%; margin-top: 6px; font-size: 0.8rem; color: var(--muted); }

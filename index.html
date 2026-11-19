@@ -3,13 +3,13 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Mandelbrot Generator</title>
+  <title>Mandelbrot Expedition</title>
   <link rel="stylesheet" href="style.css" />
 </head>
 <body>
   <header>
-    <h1>Mandelbrot Generator</h1>
-    <p class="sub">Vanilla JS &middot; configurable palette &middot; saveable image</p>
+    <h1>Mandelbrot Expedition</h1>
+    <p class="sub" id="headerSub">Paint to reveal the complex plane</p>
   </header>
 
   <main>
@@ -22,10 +22,12 @@
       <canvas id="loadCanvas" width="800" height="600"></canvas>
       <div class="overlay" id="overlay" hidden>Rendering&hellip;</div>
       <div class="zoom-badge" id="zoomBadge">Zoom: 1x</div>
+      <div class="paint-badge" id="paintBadge" hidden></div>
+      <div class="toasts" id="toasts" aria-live="polite"></div>
       <!-- Marks the exact view center: the wheel-zoom anchor, and what
            auto-paint reveals when enabled. Always visible. -->
       <div class="reticle" id="reticle"></div>
-      <p class="hint">Click or drag to paint tiles (shared with everyone) · right-drag, space+drag, or arrows/WASD to pan · scroll to zoom · double-click to re-center.</p>
+      <p class="hint">Click or drag to paint tiles (1 paint each, shared with your room) · right-drag, space+drag, or arrows/WASD to pan · scroll to zoom · double-click to re-center.</p>
     </section>
 
     <aside class="info-panel" id="infoPanel">
@@ -86,6 +88,56 @@
     </aside>
 
     <aside class="controls">
+      <!-- Room panel: shown once joined. Teacher panel: host only. -->
+      <fieldset id="gamePanel" hidden>
+        <legend>Room <span id="roomCode" class="room-code"></span></legend>
+        <div class="room-name" id="roomName"></div>
+        <div id="youRows">
+          <div class="info-row"><span>You</span><b id="youName"></b></div>
+          <div class="info-row"><span>Paint left</span><b id="youPaint">0</b></div>
+        </div>
+        <div class="info-row"><span>Treasures found</span><b id="foundCount">0 / 0</b></div>
+        <h5 class="sub-head">Discoveries</h5>
+        <div id="discoveryList" class="game-list"></div>
+        <h5 class="sub-head">Explorers</h5>
+        <div id="playerList" class="game-list"></div>
+        <button type="button" id="leaveBtn" class="ghost small-btn">Leave room</button>
+      </fieldset>
+
+      <fieldset id="hostPanel" hidden>
+        <legend>Teacher</legend>
+        <label>Student join link
+          <span class="copy-row"><input type="text" id="joinLink" readonly /><button type="button" id="copyJoin">Copy</button></span>
+        </label>
+        <details class="host-link">
+          <summary>Your teacher link (keep private)</summary>
+          <span class="copy-row"><input type="text" id="hostLink" readonly /><button type="button" id="copyHost">Copy</button></span>
+        </details>
+        <label class="check">
+          <input type="checkbox" id="xray" /> X-ray: see through the fog (only you)
+        </label>
+
+        <h5 class="sub-head">Hide a treasure</h5>
+        <p class="help">Hides it on the tile under the reticle, at the current level (<b>L<span id="hostLevel">0</span></b>). Students find it by painting that exact tile at that zoom. Use X-ray to scout without revealing.</p>
+        <label>Name
+          <input type="text" id="objName" maxlength="60" placeholder="e.g. Seahorse Valley" />
+        </label>
+        <label>Fact shown when found (optional)
+          <input type="text" id="objNote" maxlength="500" placeholder="e.g. Spirals near c = −0.75 + 0.1i" />
+        </label>
+        <button type="button" id="objAdd" class="small-btn">☆ Hide treasure here</button>
+        <div id="objList" class="game-list"></div>
+
+        <h5 class="sub-head">Paint budget</h5>
+        <label>Starting paint for new students
+          <input type="number" id="startBudget" min="0" step="1" />
+        </label>
+        <div class="grant-row">
+          <input type="number" id="grantAmt" value="10" min="1" step="1" title="Amount per grant" />
+          <button type="button" id="grantAll">Give everyone</button>
+        </div>
+      </fieldset>
+
       <fieldset>
         <legend>Anchor point (center)</legend>
         <label>Real (x)
@@ -183,6 +235,42 @@
       <p class="status" id="status"></p>
     </aside>
   </main>
+
+  <!-- Lobby: join a room by code, create one (teacher), or explore solo. -->
+  <div class="lobby" id="lobby" hidden>
+    <div class="lobby-card">
+      <h2>Mandelbrot Expedition</h2>
+      <p class="lobby-intro">Explore the complex plane with your class. Each click paints a tile and reveals the Mandelbrot set
+        underneath, for everyone in your room. Your paint is limited, and treasures are hidden deep in the set.</p>
+      <form id="joinForm" class="lobby-form">
+        <h3>Join a room</h3>
+        <label>Room code
+          <input type="text" id="joinCode" maxlength="5" autocomplete="off" spellcheck="false" class="code-input" />
+        </label>
+        <label>Your name
+          <input type="text" id="joinName" maxlength="24" autocomplete="nickname" />
+        </label>
+        <button type="submit" class="primary">Join</button>
+      </form>
+      <details class="lobby-create">
+        <summary>Teacher: create a room</summary>
+        <form id="createForm" class="lobby-form">
+          <label>Room name
+            <input type="text" id="createName" maxlength="60" placeholder="e.g. Period 3 · Complex numbers" />
+          </label>
+          <label>Starting paint per student
+            <input type="number" id="createBudget" value="50" min="0" step="1" />
+          </label>
+          <label>Creation key (only if your server requires one)
+            <input type="password" id="createKey" autocomplete="off" />
+          </label>
+          <button type="submit">Create room</button>
+        </form>
+      </details>
+      <p class="lobby-error" id="lobbyError" role="alert"></p>
+      <button type="button" id="soloBtn" class="ghost solo-btn">Explore solo instead (unlimited, this browser only)</button>
+    </div>
+  </div>
 
   <script src="app.js"></script>
 </body>

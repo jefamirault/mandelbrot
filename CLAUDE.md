@@ -1,20 +1,23 @@
 # Mandelbrot Generator
 
-A dependency-free, *paint-to-reveal* Mandelbrot explorer. Vanilla JS + Canvas, no build
-step, no framework, no package manager. Tiles start fogged and are only computed when a
-user paints (clicks) them; the painted set is shared by all users via a tiny Node server.
+A dependency-free, *paint-to-reveal* Mandelbrot explorer, played as a classroom game.
+Vanilla JS + Canvas, no build step, no framework, no package manager. Tiles start fogged
+and are only computed when a user paints (clicks) them. Every shared map is a **room**: a
+teacher creates it, students join with a code + name, each gets a limited paint budget,
+and the teacher hides treasures on specific tiles for the class to discover.
 
 ## Files
 - `index.html` — markup and all controls (the `id`s here are the contract with `app.js`).
 - `style.css` — dark theme; layout is a flex column (`header` + `main`).
 - `app.js` — everything: math, worker pool, rendering, interactions, palette UI.
-- `server.js` — shared painted-tile API + static server. Node builtins only (no
-  package.json). Store is `painted-tiles.jsonl` (gitignored), an append-only key log.
+- `server.js` — game rooms API + static server. Node builtins only (no package.json).
+  Store is `data/rooms/<CODE>.jsonl` (gitignored), one append-only event log per room.
 
 ## Running
-`./serve.sh` (= `node server.js 8000`) serves the site *and* the shared-painting API.
-Opening `index.html` directly (`file://`) must keep working — painting then degrades to a
-local-only set (localStorage), same as any static host without the API. This is why the
+`./serve.sh` (= `node server.js 8000`) serves the site *and* the rooms API.
+Opening `index.html` directly (`file://`) must keep working — it skips the lobby and runs
+**solo mode** (unlimited, local-only painted set in localStorage). The lobby also offers
+solo, which is the escape hatch on any static host without the API. This is why the
 Web Worker is built from an inlined Blob URL (`WORKER_SRC`), not a separate `.js` file:
 Chrome blocks `new Worker('file.js')` from `file://` origins.
 
@@ -75,10 +78,11 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
 - `tileToScratch` colorizes a tile's values into the shared `scratch` canvas before each blit.
 
 ### Paint-to-reveal (shared "fog of war")
-- **Tiles compute only when painted.** `render()` resolves a cover tile through
-  cache → IDB → compute *only if* its place-key is in the `painted` set; otherwise it draws
-  `blitUnexplored` (dark veil + faint ancestor ghost + grid stroke). A cached tile always
-  shows regardless — cached data implies someone painted it once.
+- **Tiles compute only when visible.** `tileVisible(L, ix, iy)` = painted in *this* map,
+  or host X-ray. `render()`/`repaint()` resolve a cover tile through cache → IDB → compute
+  only if visible; otherwise `blitUnexplored` (dark veil + faint ancestor ghost + grid
+  stroke). **Cached data alone does not reveal** — the tile cache (memory + IDB) is shared by
+  every room a browser visits, so `blitPlaceholder` also only uses visible ancestors.
 - **Painted keys are `L:ix:iy` — no `paramHash`.** Painting is a property of the *place*:
   a revealed tile stays revealed across iteration-parameter changes (those still recompute
   values under the new `paramHash`).
@@ -95,24 +99,53 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   spinners) because worker blits onto the main canvas would erase inline markers. Redrawn
   every render (transient included) and on `revealPainted`; cleared during a pan drag
   (the snapshot preview slides but the overlay can't).
-- **Auto-paint center** (`autoPaintCenter`, persisted; "Painting" checkbox in the panel):
+- **Auto-paint center** (`autoPaintCenter`; "Painting" checkbox; persisted per mode via
+  `autoPaintSettingKey` — `autoPaintRoom` defaults **off**, since it spends budget and a
+  teacher's auto-paint would pre-reveal the tile "Hide treasure here" targets):
   every settled (non-transient) `render()` marks the tile under the view center as painted
   before the cover loop, so it resolves in the same batch as other painted misses. The
   `#reticle` div (CSS crosshair fixed at the viewport center = the canvas center pixel,
   since `object-fit: cover` scales about the center) is always visible — it marks the
   view center / wheel-zoom anchor, independent of the checkbox.
-- **Sharing.** `server.js` keeps an append-only key log; its array index is the sync
-  cursor. Clients `POST api/painted` local paints (batched, 400 ms) and poll
-  `GET api/painted?since=<seq>` every 3 s; fresh remote keys in view resolve via
-  `revealPainted`. Everything is idempotent (server dedupes, `addPainted` dedupes), so
-  re-sends are harmless. Relative URLs → works under any mount path, same-origin only.
-- **Fallback.** On `file://` or when the API errors, `syncStatus` flips to local-only and
-  the painted set lives in localStorage (`mandelbrot-painted`, capped at
-  `PAINTED_PERSIST_MAX`; when capped, the sync cursor resets to 0 so the next session
-  re-pulls the full set from the server — the server is the source of truth).
+- **Sharing.** Each room's painted keys are a list whose index is the sync cursor.
+  Clients `POST api/rooms/<CODE>/paint` (batched 250 ms, **one request in flight** so the
+  returned `remaining` reconciles against exactly the unsent paints) and poll
+  `GET api/rooms/<CODE>/state?since=<seq>` every 3 s (keys + roster + objectives); fresh
+  remote keys in view resolve via `revealPainted`. Re-sends are harmless (already-painted
+  keys are free and reported accepted). Relative URLs → any mount path, same-origin only.
+  The local painted cache is per room (`mandelbrot-painted:<CODE>`; solo keeps the old
+  `mandelbrot-painted`), capped at `PAINTED_PERSIST_MAX` (cap → cursor resets to 0).
 - **Per-gen reference orbit.** Each paint is its own `enqueueCompute`, so the expensive
   main-thread reference orbit is computed lazily once per generation (`broadcastRef`,
   `refGen`) instead of per enqueue.
+
+### Game rooms (server.js + "Game UI" section of app.js)
+- **Event-sourced store.** A room is `data/rooms/<CODE>.jsonl`: `room`, `settings`, `join`,
+  `paint`, `grant`, `obj`, `objdel`. All state (painted set, budgets, discoveries) is derived
+  by `apply()`; live requests go through `commit()` = append then `apply()`, so a restart
+  replays to exactly what clients saw. Keep `apply()` deterministic — discoveries are
+  *derived* on replay (a `paint` matching an unfound objective's key), never logged.
+- **Auth** is bearer tokens: `X-Host-Token` (returned once on room create) or `X-Token`
+  (returned on join); the server stores only SHA-256 hashes. The client keeps them in
+  localStorage `mandelbrot-session:<CODE>`; `?room=CODE&host=TOKEN` seeds a host session
+  (then `replaceState` strips it from the address bar). Optional `ROOM_CREATE_KEY` env
+  gates room creation. Names are unique per room (case-insensitive).
+- **Budget is server-enforced.** 1 paint = 1 newly revealed tile; already-painted is free;
+  the host is unlimited. The client paints optimistically (`claimTile`, `game.remaining--`)
+  and re-fogs whatever comes back in `rejected`. Teacher grants per player or to everyone
+  (`"*"`, applies to players who exist at that moment) and sets the start budget for
+  later joiners.
+- **Objectives ("treasures") are hidden.** An objective is just a tile key `L:ix:iy` —
+  found when someone paints that exact tile (same level). Students' `state` only includes
+  found ones plus `objectiveCount`; the host gets all. The server refuses to hide one on an
+  already-revealed tile, which is why the host has **X-ray** (`xray` → `tileVisible` true
+  everywhere, local only, never pushed) to scout without revealing.
+- `drawObjectiveMarkers` (end of `drawExploreOverlay`) draws a star + tile outline per known
+  objective, positioned by fixed-point subtraction at `max(state.frac, L + 10)` bits so a
+  deep objective places correctly from a shallow view. `flyToTile` frames a key at exactly
+  its level on this device (`spanW = pxW / 2^(L+6)`, the inverse of `pickLevel`). Note the
+  level a given zoom maps to depends on `pxW` (device resolution), so "level L" is the
+  stable notion, not "zoom N×".
 
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
@@ -182,7 +215,11 @@ report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
 - Cache bounds are tunable: `MAX_CACHE_TILES` (memory LRU) and `DB_MAX` (IndexedDB prune).
 - IndexedDB on some `file://` origins is blocked/opaque → automatic memory-only fallback.
 - Paints made while the API is unreachable sit in `pushQueue` (retried each poll) but are
-  lost if the tab closes first — the tiles stay revealed locally, just never shared.
-- The painted log grows without bound (keys are never deleted); fine for a long while,
-  but a prune/compaction story is future work. There's no auth/rate limit on the API
-  beyond key-shape validation — anyone can paint, which is the point, but also the risk.
+  lost if the tab closes first — the tiles stay revealed locally, just never shared (and
+  the budget isn't charged).
+- Room logs grow without bound and rooms are never deleted (delete the `.jsonl` and restart).
+  No rate limiting; without `ROOM_CREATE_KEY` anyone can create rooms.
+- A student who loses their browser storage can't rejoin under the same name (names are
+  unique and tokens are only stored hashed). A teacher "reissue join link" is future work.
+- The pre-rooms global map (`painted-tiles.jsonl`, `/api/painted`) is gone; an old
+  production `painted-tiles.jsonl` is simply ignored.

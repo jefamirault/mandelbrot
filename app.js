@@ -58,9 +58,10 @@ const els = {
 };
 
 // Auto-paint the tile under the center reticle on every settled view change.
-// Persisted. (The reticle stays visible regardless — it marks the view center
-// and wheel-zoom anchor, not just the paint target.)
-let autoPaintCenter = SETTINGS.autoPaintCenter != null ? !!SETTINGS.autoPaintCenter : true;
+// Persisted per mode (see autoPaintSettingKey): defaults off in rooms. Off until a mode is entered (the lobby never
+// paints). The reticle stays visible regardless — it marks the view center
+// and wheel-zoom anchor, not just the paint target.
+let autoPaintCenter = false;
 
 const DEFAULTS = {
   centerX: -0.5, centerY: 0, rectW: 3.5, rectH: 2.625,
@@ -632,95 +633,225 @@ function maybePrune(db) {
 }
 
 // ============================================================================
-// Painted-tile set ("fog of war", shared by all users)
+// Painted-tile set ("fog of war") + game rooms
 // ----------------------------------------------------------------------------
 // Tiles are only *computed* once painted (clicked). Painted keys are plain
 // "L:ix:iy" — no paramHash, painting is a property of the *place*, so a tile
-// stays revealed across iteration-parameter changes. The set syncs through a
-// tiny same-origin API (see server.js): POST pushes local paints, a polled GET
-// with a `since` cursor pulls everyone else's. Degrades to a local-only set
-// (localStorage) when the API is unreachable (file://, static-only hosting).
+// stays revealed across iteration-parameter changes.
+//
+// Every shared map is a *room* (see server.js): students join with a code and
+// a name, get a limited paint budget, and hunt for treasures the teacher (the
+// room's host) hid on specific tiles. The server is the authority on budgets
+// and discoveries; the client paints optimistically and re-fogs whatever the
+// server rejects. Solo mode (file://, or no API) is an unlimited local-only map.
 // ============================================================================
-const PAINTED_KEY = "mandelbrot-painted";
+const SOLO_PAINTED_KEY = "mandelbrot-painted";   // pre-rooms key, kept for solo maps
 const PAINTED_PERSIST_MAX = 20000;  // localStorage cap (deep-zoom keys are long)
 const painted = new Set();
 let paintedList = [];               // insertion order, for capped persistence
 let paintedSeq = 0;                 // server sync cursor (next index to fetch)
 const API_OK = location.protocol !== "file:";
-let syncStatus = API_OK ? "connecting…" : "local (file://)";
+let syncStatus = "not joined";
 let pushQueue = [];                 // locally painted keys not yet POSTed
 let pushTimer = 0;
+let pushInFlight = 0;               // keys POSTed but not yet answered
+
+// mode: null (lobby, nothing paints) | "solo" | "room".
+const game = {
+  mode: null, code: "", roomName: "", name: "", playerId: "",
+  token: "", hostToken: "", isHost: false,
+  remaining: 0,                     // optimistic: server value minus unsent paints
+  startBudget: 0, players: [], objectives: [], objectiveCount: 0,
+  foundSeen: null,                  // objective ids already announced (null until first sync)
+};
+let xray = false;                   // host only: see through fog locally (never shared)
 
 const paintedKeyOf = (d) => `${d.L}:${d.ix}:${d.iy}`;
+// Visible = revealed in *this* map. Cached tile data alone doesn't count: the
+// tile cache is shared by every room this browser has visited.
+const tileVisible = (L, ix, iy) => xray || painted.has(`${L}:${ix}:${iy}`);
+const paintedStoreKey = () => game.mode === "room" ? `mandelbrot-painted:${game.code}` : SOLO_PAINTED_KEY;
+
 function addPainted(key) {
   if (painted.has(key)) return false;
   painted.add(key);
   paintedList.push(key);
   return true;
 }
-(() => {
+function removePainted(keys) {
+  const drop = new Set(keys);
+  for (const k of drop) painted.delete(k);
+  paintedList = paintedList.filter((k) => !drop.has(k));
+  savePainted();
+}
+function loadPaintedLocal() {
+  painted.clear(); paintedList = []; paintedSeq = 0;
   try {
-    const s = JSON.parse(localStorage.getItem(PAINTED_KEY));
+    const s = JSON.parse(localStorage.getItem(paintedStoreKey()));
     if (s && Array.isArray(s.keys)) {
       for (const k of s.keys) addPainted(k);
       paintedSeq = s.seq || 0;
     }
   } catch (e) { /* fresh start */ }
-})();
+}
 function savePainted() {
+  if (!game.mode) return;
   try {
     // If the cap dropped old keys, reset the cursor so the next session
     // re-fetches the full set from the server (the source of truth).
     const capped = paintedList.length > PAINTED_PERSIST_MAX;
-    localStorage.setItem(PAINTED_KEY, JSON.stringify({
+    localStorage.setItem(paintedStoreKey(), JSON.stringify({
       seq: capped ? 0 : paintedSeq,
       keys: paintedList.slice(-PAINTED_PERSIST_MAX),
     }));
   } catch (e) { /* storage blocked (some file:// origins) → session-only */ }
 }
 
+// ---- Budget gate ----
+function canPaint() {
+  if (game.mode === "solo") return true;
+  if (game.mode === "room") return game.isHost || game.remaining > 0;
+  return false;
+}
+let outOfPaintAt = -Infinity;
+function outOfPaint() {
+  if (game.mode !== "room" || performance.now() - outOfPaintAt < 4000) return;
+  outOfPaintAt = performance.now();
+  toast("Out of paint! Ask your teacher for more.", "warn");
+}
+// Claim an unpainted tile: spend budget, mark it, queue it for the server.
+// Returns false if it was already painted or the budget is empty.
+function claimTile(pk) {
+  if (painted.has(pk)) return false;
+  if (!canPaint()) { outOfPaint(); return false; }
+  addPainted(pk);
+  if (game.mode === "room" && !game.isHost) game.remaining--;
+  savePainted();
+  schedulePush(pk);
+  updateGameHud();
+  return true;
+}
+
+// ---- Server sync ----
+function apiHeaders() {
+  const h = { "Content-Type": "application/json" };
+  if (game.hostToken) h["X-Host-Token"] = game.hostToken;
+  else if (game.token) h["X-Token"] = game.token;
+  return h;
+}
+const roomUrl = (suffix) => `api/rooms/${game.code}/${suffix}`;
+async function api(method, url, body) {
+  const res = await fetch(url, {
+    method, headers: apiHeaders(), body: body ? JSON.stringify(body) : undefined,
+  });
+  let data = {};
+  try { data = await res.json(); } catch (e) { /* empty body */ }
+  if (!res.ok) {
+    const err = new Error(data.error || `HTTP ${res.status}`);
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
 // Push local paints in small batches (a stroke paints many tiles quickly).
+// One request at a time, so the server's `remaining` can be reconciled
+// against exactly the paints it hasn't seen yet.
 function schedulePush(key) {
+  if (game.mode !== "room") return;
   pushQueue.push(key);
-  if (API_OK && !pushTimer) pushTimer = setTimeout(flushPush, 400);
+  if (!pushTimer) pushTimer = setTimeout(flushPush, 250);
 }
 async function flushPush() {
   pushTimer = 0;
-  if (pushQueue.length === 0) return;
+  if (pushQueue.length === 0 || game.mode !== "room") return;
+  if (pushInFlight) { pushTimer = setTimeout(flushPush, 150); return; }
   const batch = pushQueue;
   pushQueue = [];
+  pushInFlight = batch.length;
   try {
-    const res = await fetch("api/painted", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ keys: batch }),
-    });
-    if (!res.ok) throw new Error(String(res.status));
+    const data = await api("POST", roomUrl("paint"), { keys: batch });
     syncStatus = "connected";
+    pushInFlight = 0;
+    if (data.remaining != null) game.remaining = data.remaining - pushQueue.length;
+    if (data.rejected && data.rejected.length) {
+      removePainted(data.rejected);
+      outOfPaint();
+      render();                     // re-fog the tiles the server refused
+    }
+    if (data.discovered && data.discovered.length) mergeObjectives(data.discovered);
+    updateGameHud();
   } catch (e) {
+    pushInFlight = 0;
     pushQueue = batch.concat(pushQueue);  // retried by the next poll tick
-    syncStatus = "local only";
+    syncStatus = "offline — retrying";
   }
 }
-async function pollPainted() {
-  if (!API_OK) return;
+
+async function pollRoom() {
+  if (game.mode !== "room") return;
+  let data;
   try {
-    const res = await fetch(`api/painted?since=${paintedSeq}`);
-    if (!res.ok) throw new Error(String(res.status));
-    const data = await res.json();
-    syncStatus = "connected";
-    const fresh = new Set();
-    for (const k of data.keys || []) if (typeof k === "string" && addPainted(k)) fresh.add(k);
-    const seq = Number(data.seq);
-    if (Number.isFinite(seq) && (seq !== paintedSeq || fresh.size)) {
-      paintedSeq = seq;
-      savePainted();
-    }
-    if (fresh.size) revealPainted(fresh);
+    data = await api("GET", roomUrl(`state?since=${paintedSeq}`));
   } catch (e) {
-    syncStatus = "local only";
+    syncStatus = "offline — retrying";
+    if (e.status === 401 || e.status === 404) leaveRoom(e.status === 404 ? "That room no longer exists." : "Please join the room again.");
+    return;
   }
+  syncStatus = "connected";
+  game.roomName = data.name;
+  game.startBudget = data.startBudget;
+  game.players = data.players || [];
+  game.objectiveCount = data.objectiveCount || 0;
+  if (data.you) {
+    game.name = data.you.name;
+    game.playerId = data.you.id;
+    // Only trust the server's count when nothing of ours is unanswered.
+    if (!pushInFlight) game.remaining = data.you.remaining - pushQueue.length;
+  }
+  const fresh = new Set();
+  for (const k of data.keys || []) if (typeof k === "string" && addPainted(k)) fresh.add(k);
+  const seq = Number(data.seq);
+  if (Number.isFinite(seq) && (seq !== paintedSeq || fresh.size)) {
+    paintedSeq = seq;
+    savePainted();
+  }
+  setObjectives(data.objectives || []);
+  if (fresh.size) revealPainted(fresh);
+  updateGameHud();
+  renderGamePanel();
   if (pushQueue.length && !pushTimer) pushTimer = setTimeout(flushPush, 100);
+}
+
+// ---- Objectives ("treasures") ----
+// Students only receive found ones; the host receives all. Newly found ones
+// (that this client hasn't announced yet) get a toast — skipped on the first
+// sync so joining a room mid-game doesn't replay every past discovery.
+function setObjectives(list) {
+  const first = game.foundSeen === null;
+  if (first) game.foundSeen = new Set();
+  for (const o of list) {
+    if (!o.found || game.foundSeen.has(o.id)) continue;
+    game.foundSeen.add(o.id);
+    if (!first) announceDiscovery(o);
+  }
+  game.objectives = list;
+  drawExploreOverlay();
+}
+function mergeObjectives(found) {
+  const byId = new Map(game.objectives.map((o) => [o.id, o]));
+  for (const o of found) byId.set(o.id, o);
+  setObjectives([...byId.values()]);
+  renderGamePanel();
+}
+function announceDiscovery(o) {
+  const mine = o.foundBy === game.name && !game.isHost;
+  const who = mine ? "You" : o.foundBy;
+  toast(`★ ${who} discovered “${o.name}”!${o.note ? " " + o.note : ""}`, mine ? "win" : "info", 9000);
+}
+function parseTileKey(key) {
+  const [L, ix, iy] = key.split(":");
+  return { L: Number(L), ix: BigInt(ix), iy: BigInt(iy) };
 }
 
 // ---- Painting a tile (and placeholders) onto the viewport ----
@@ -740,10 +871,13 @@ function blitValues(d, iter) {
 }
 function blitTile(d, t) { blitValues(d, t.iter); }
 // Until a tile is computed, upscale the nearest cached ancestor as a placeholder
-// (the instant blurry-zoom you get in map apps). Walk up to 8 levels.
+// (the instant blurry-zoom you get in map apps). Walk up to 8 levels. Only
+// ancestors revealed in this map qualify — the cache spans every room, and a
+// ghost of another room's (or the host's x-ray) tile would leak the fog.
 function blitPlaceholder(d) {
   for (let k = 1; k <= 8 && d.L - k >= 0; k++) {
     const ak = BigInt(k);
+    if (!tileVisible(d.L - k, d.ix >> ak, d.iy >> ak)) continue;
     const at = cacheGet(tileKey(d.L - k, d.ix >> ak, d.iy >> ak));
     if (!at) continue;
     const mask = (1n << ak) - 1n;
@@ -789,6 +923,61 @@ function drawExploreOverlay() {
       }
     }
   }
+  drawObjectiveMarkers();
+}
+
+// Treasure markers: a star at the objective tile's center (any zoom), plus the
+// tile outline once it's big enough to see. Students only know found ones
+// (gold); the host also sees hidden ones (violet, dashed). Positions use
+// fixed-point subtraction from the view center like coverTiles, at a precision
+// deep enough for the objective's level even when the view is shallower.
+function drawObjectiveMarkers() {
+  if (!currentCover || !renderParams || !game.objectives.length) return;
+  const p = renderParams, vs = currentCover.viewScale;
+  const r = exploreCanvas.getBoundingClientRect();
+  const k = r.width ? 1 / Math.max(r.width / p.pxW, r.height / p.pxH) : 1;  // canvas px per CSS px
+  exploreCtx.save();
+  exploreCtx.font = `600 ${Math.round(12 * k)}px system-ui, sans-serif`;
+  exploreCtx.textBaseline = "middle";
+  for (const o of game.objectives) {
+    const t = parseTileKey(o.key);
+    const f = Math.max(state.frac, t.L + 10);
+    const up = BigInt(f - state.frac);
+    const span = tileSpanFp(t.L, f);
+    const odx = fpToDouble(rootLeftFp(f) + t.ix * span - (state.cx << up), f);
+    const ody = fpToDouble(rootTopFp(f) - t.iy * span - (state.cy << up), f);
+    const size = ROOT_SPAN * Math.pow(2, -t.L) / vs;
+    const x = odx / vs + p.pxW / 2, y = p.pxH / 2 - ody / vs;
+    const mx = x + size / 2, my = y + size / 2;
+    const pad = 200 * k;
+    if (mx < -pad || my < -pad || mx > p.pxW + pad || my > p.pxH + pad) continue;
+    const rgb = o.found ? "255, 210, 80" : "200, 150, 255";
+    if (size >= 10 * k) {
+      exploreCtx.setLineDash(o.found ? [] : [6 * k, 5 * k]);
+      exploreCtx.lineWidth = 2 * k;
+      exploreCtx.strokeStyle = `rgba(${rgb}, 0.85)`;
+      exploreCtx.strokeRect(x, y, size, size);
+      exploreCtx.setLineDash([]);
+    }
+    const sr = 8 * k;
+    exploreCtx.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const a = -Math.PI / 2 + i * Math.PI / 5, rr = i % 2 ? sr * 0.45 : sr;
+      exploreCtx.lineTo(mx + rr * Math.cos(a), my + rr * Math.sin(a));
+    }
+    exploreCtx.closePath();
+    exploreCtx.fillStyle = `rgb(${rgb})`;
+    exploreCtx.strokeStyle = "rgba(0, 0, 0, 0.7)";
+    exploreCtx.lineWidth = 1.5 * k;
+    exploreCtx.fill();
+    exploreCtx.stroke();
+    exploreCtx.lineWidth = 3 * k;
+    exploreCtx.strokeStyle = "rgba(0, 0, 0, 0.75)";
+    exploreCtx.strokeText(o.name, mx + sr + 4 * k, my);
+    exploreCtx.fillStyle = `rgb(${rgb})`;
+    exploreCtx.fillText(o.name, mx + sr + 4 * k, my);
+  }
+  exploreCtx.restore();
 }
 
 // Unpainted tile: near-black veil with a faint ghost of the nearest cached
@@ -828,10 +1017,11 @@ function drawTileSpinner(d, angle) {
 }
 let hoverDesc = null;   // unpainted cover tile under the cursor (brush preview)
 function drawHoverHighlight(d) {
-  loadCtx.fillStyle = "rgba(255, 255, 255, 0.07)";
+  const ok = canPaint();          // red brush = this click won't paint (no budget)
+  loadCtx.fillStyle = ok ? "rgba(255, 255, 255, 0.07)" : "rgba(255, 80, 80, 0.08)";
   loadCtx.fillRect(d.destX, d.destY, d.destSize, d.destSize);
   loadCtx.lineWidth = 2;
-  loadCtx.strokeStyle = "rgba(255, 255, 255, 0.45)";
+  loadCtx.strokeStyle = ok ? "rgba(255, 255, 255, 0.45)" : "rgba(255, 90, 90, 0.6)";
   loadCtx.strokeRect(d.destX + 1, d.destY + 1, d.destSize - 2, d.destSize - 2);
 }
 function loadAnimTick(ts) {
@@ -912,10 +1102,10 @@ function repaint() {
   renderParams = readParams();
   currentLut = buildPalette(activeStops());
   for (const d of currentCover.tiles) {
+    if (!tileVisible(d.L, d.ix, d.iy)) { blitUnexplored(d); continue; }
     const t = cacheGet(d.key);
     if (t && t.paramHash === paramHash) blitTile(d, t);
-    else if (painted.has(paintedKeyOf(d))) blitPlaceholder(d);
-    else blitUnexplored(d);
+    else blitPlaceholder(d);
   }
 }
 
@@ -1048,23 +1238,20 @@ function render(opts) {
   // resolve it in the same hydrate/compute batch as any other painted tile.
   if (autoPaintCenter && !transient) {
     const cd = tileAtCanvasPoint(cover, p.pxW / 2, p.pxH / 2);
-    if (cd) {
-      const pk = paintedKeyOf(cd);
-      if (addPainted(pk)) { savePainted(); schedulePush(pk); }
-    }
+    if (cd) claimTile(paintedKeyOf(cd));
   }
 
-  // Only *painted* tiles are resolved (cache → IDB → compute); the rest stay
-  // fogged until someone paints them. A cached tile always shows — cached data
-  // implies it was painted at some point (possibly by another user).
+  // Only *visible* (painted in this map, or host x-ray) tiles are resolved
+  // (cache → IDB → compute); the rest stay fogged until someone paints them.
+  // Cached data alone doesn't reveal: the cache is shared across rooms.
   const misses = [];
   hitCount = 0;
   unexploredCount = 0;
   for (const d of cover.tiles) {
+    if (!tileVisible(d.L, d.ix, d.iy)) { blitUnexplored(d); unexploredCount++; continue; }
     const t = cacheGet(d.key);
     if (t && t.paramHash === paramHash) { blitTile(d, t); hitCount++; }
-    else if (painted.has(paintedKeyOf(d))) { blitPlaceholder(d); misses.push(d); }
-    else { blitUnexplored(d); unexploredCount++; }
+    else { blitPlaceholder(d); misses.push(d); }
   }
   drawExploreOverlay();
   computeCount = misses.length;
@@ -1175,11 +1362,9 @@ function resolveTile(d) {
 }
 
 function paintTile(d) {
-  const pk = paintedKeyOf(d);
-  if (!addPainted(pk)) return;   // already painted (maybe still computing)
-  savePainted();
-  schedulePush(pk);
-  resolveTile(d);
+  // Already painted (maybe still computing), or out of budget → nothing.
+  if (!claimTile(paintedKeyOf(d))) return;
+  if (!xray) resolveTile(d);     // under x-ray it's already resolving
 }
 
 // Fresh keys from other users: resolve any that sit in the current view.
@@ -1188,7 +1373,7 @@ function paintTile(d) {
 function revealPainted(freshKeys) {
   if (!currentCover || !renderParams) return;
   for (const d of currentCover.tiles) {
-    if (freshKeys.has(paintedKeyOf(d))) resolveTile(d);
+    if (freshKeys.has(paintedKeyOf(d)) && !xray) resolveTile(d);
   }
   drawExploreOverlay();
 }
@@ -1404,9 +1589,18 @@ window.addEventListener("wheel", (e) => {
 // anchor / view center, not just the paint target). Turning auto-paint on
 // reveals the current center immediately (no re-render).
 els.autoPaint.checked = autoPaintCenter;
+// In a room it spends budget (students) or reveals the class's map (teacher —
+// and would pre-reveal the very tile "Hide treasure here" targets), so rooms
+// keep their own setting, default off.
+const autoPaintSettingKey = () => game.mode === "room" ? "autoPaintRoom" : "autoPaintCenter";
+function applyAutoPaintSetting() {
+  const k = autoPaintSettingKey();
+  autoPaintCenter = SETTINGS[k] != null ? !!SETTINGS[k] : k === "autoPaintCenter";
+  els.autoPaint.checked = autoPaintCenter;
+}
 els.autoPaint.addEventListener("change", () => {
   autoPaintCenter = els.autoPaint.checked;
-  saveSetting("autoPaintCenter", autoPaintCenter);
+  saveSetting(autoPaintSettingKey(), autoPaintCenter);
   if (autoPaintCenter && currentCover && renderParams) {
     const d = tileAtCanvasPoint(currentCover, canvas.width / 2, canvas.height / 2);
     if (d) paintTile(d);
@@ -1730,6 +1924,323 @@ setInterval(updateInfoPanel, 200);   // live churn (workers, IDB write-through)
 refreshDbCount();
 setInterval(refreshDbCount, 2000);
 
+// ============================================================================
+// Game UI: lobby, paint HUD, room panel, teacher tools, toasts.
+// All player/room text is server-supplied user input → textContent only.
+// ============================================================================
+const g = {
+  lobby: $("lobby"), joinForm: $("joinForm"), joinCode: $("joinCode"), joinName: $("joinName"),
+  createForm: $("createForm"), createName: $("createName"), createBudget: $("createBudget"),
+  createKey: $("createKey"), lobbyError: $("lobbyError"), soloBtn: $("soloBtn"),
+  panel: $("gamePanel"), roomName: $("roomName"), roomCode: $("roomCode"),
+  youRows: $("youRows"), youName: $("youName"), youPaint: $("youPaint"),
+  foundCount: $("foundCount"), discoveryList: $("discoveryList"), playerList: $("playerList"),
+  leaveBtn: $("leaveBtn"),
+  hostPanel: $("hostPanel"), joinLink: $("joinLink"), copyJoin: $("copyJoin"),
+  hostLink: $("hostLink"), copyHost: $("copyHost"), xray: $("xray"),
+  hostLevel: $("hostLevel"), objName: $("objName"), objNote: $("objNote"), objAdd: $("objAdd"),
+  objList: $("objList"), startBudget: $("startBudget"), grantAmt: $("grantAmt"), grantAll: $("grantAll"),
+  paintBadge: $("paintBadge"), toasts: $("toasts"), sub: $("headerSub"),
+};
+
+function toast(msg, kind = "info", ms = 5000) {
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.textContent = msg;
+  g.toasts.appendChild(el);
+  while (g.toasts.children.length > 4) g.toasts.firstChild.remove();
+  setTimeout(() => { el.classList.add("out"); setTimeout(() => el.remove(), 400); }, ms);
+}
+
+// Per-room credentials (player token or host token), so a reload or a later
+// class period drops straight back in from the same browser.
+const SESSION_PREFIX = "mandelbrot-session:";
+function loadSession(code) {
+  try { return JSON.parse(localStorage.getItem(SESSION_PREFIX + code)) || {}; }
+  catch (e) { return {}; }
+}
+function saveSession(code, s) {
+  try { localStorage.setItem(SESSION_PREFIX + code, JSON.stringify(s)); }
+  catch (e) { /* storage blocked → this tab only */ }
+}
+function clearSession(code) {
+  try { localStorage.removeItem(SESSION_PREFIX + code); } catch (e) { /* ignore */ }
+}
+
+// ---- Lobby ----
+function showLobby(opts = {}) {
+  g.lobby.hidden = false;
+  if (opts.code != null) g.joinCode.value = opts.code;
+  g.lobbyError.textContent = opts.error || "";
+  g.soloBtn.hidden = false;
+  (g.joinCode.value ? g.joinName : g.joinCode).focus();
+}
+function lobbyBusy(form, busy) {
+  for (const el of form.querySelectorAll("button, input")) el.disabled = busy;
+}
+g.joinForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const code = g.joinCode.value.trim().toUpperCase();
+  if (!/^[A-Z0-9]{5}$/.test(code)) { g.lobbyError.textContent = "Room codes are 5 letters/digits."; return; }
+  const sess = loadSession(code);
+  if (sess.token || sess.hostToken) { enterRoom(code, sess); return; }   // rejoin from this browser
+  lobbyBusy(g.joinForm, true);
+  try {
+    const data = await api("POST", `api/rooms/${code}/join`, { name: g.joinName.value });
+    const s = { token: data.token, name: data.name };
+    saveSession(code, s);
+    enterRoom(code, s);
+  } catch (err) {
+    g.lobbyError.textContent = err.status ? err.message : "Can't reach the server.";
+  } finally { lobbyBusy(g.joinForm, false); }
+});
+g.createForm.addEventListener("submit", async (e) => {
+  e.preventDefault();
+  lobbyBusy(g.createForm, true);
+  try {
+    const data = await api("POST", "api/rooms", {
+      name: g.createName.value, startBudget: Number(g.createBudget.value),
+      createKey: g.createKey.value || undefined,
+    });
+    const s = { hostToken: data.hostToken };
+    saveSession(data.code, s);
+    enterRoom(data.code, s);
+  } catch (err) {
+    g.lobbyError.textContent = err.status ? err.message : "Can't reach the server.";
+  } finally { lobbyBusy(g.createForm, false); }
+});
+g.soloBtn.addEventListener("click", enterSolo);
+
+// ---- Entering / leaving ----
+let pollTimer = 0;
+function resetGame() {
+  clearInterval(pollTimer); pollTimer = 0;
+  clearTimeout(pushTimer); pushTimer = 0;
+  pushQueue = []; pushInFlight = 0;
+  Object.assign(game, {
+    mode: null, code: "", roomName: "", name: "", playerId: "", token: "", hostToken: "",
+    isHost: false, remaining: 0, startBudget: 0, players: [], objectives: [],
+    objectiveCount: 0, foundSeen: null,
+  });
+  xray = false; g.xray.checked = false;
+}
+async function enterRoom(code, sess) {
+  resetGame();
+  Object.assign(game, {
+    mode: "room", code, token: sess.token || "", hostToken: sess.hostToken || "",
+    isHost: !!sess.hostToken, name: sess.name || "",
+  });
+  loadPaintedLocal();
+  applyAutoPaintSetting();
+  history.replaceState(null, "", `?room=${code}`);   // drops ?host= from the address bar
+  g.lobby.hidden = true;
+  g.panel.hidden = false;
+  g.hostPanel.hidden = !game.isHost;
+  // Students don't need the tile-engine telemetry; keep it a click away.
+  if (!game.isHost && !info.panel.classList.contains("collapsed")) info.toggle.click();
+  syncStatus = "connecting…";
+  updateGameHud();
+  renderGamePanel();
+  await pollRoom();
+  if (game.mode !== "room" || game.code !== code) return;   // the poll bounced us
+  render();
+  pollTimer = setInterval(pollRoom, 3000);
+}
+function leaveRoom(error) {
+  const code = game.code;
+  if (error) clearSession(code);     // dead credentials: ask for a name again
+  resetGame();
+  painted.clear(); paintedList = []; paintedSeq = 0;
+  history.replaceState(null, "", location.pathname);
+  g.panel.hidden = true;
+  g.hostPanel.hidden = true;
+  syncStatus = "not joined";
+  updateGameHud();
+  render();
+  showLobby({ code, error });
+}
+function enterSolo() {
+  resetGame();
+  game.mode = "solo";
+  loadPaintedLocal();
+  applyAutoPaintSetting();
+  g.lobby.hidden = true;
+  syncStatus = API_OK ? "solo — this browser only" : "solo (file://)";
+  updateGameHud();
+  render();
+}
+g.leaveBtn.addEventListener("click", () => leaveRoom());
+
+function boot() {
+  if (!API_OK) { enterSolo(); return; }   // file://: no server, unlimited local map
+  const q = new URLSearchParams(location.search);
+  const code = (q.get("room") || "").trim().toUpperCase();
+  if (!code) { showLobby(); return; }
+  const sess = loadSession(code);
+  const ht = q.get("host");
+  if (ht) { sess.hostToken = ht; saveSession(code, sess); }
+  if (sess.token || sess.hostToken) enterRoom(code, sess);
+  else showLobby({ code });
+}
+
+// ---- HUD + panels ----
+function updateGameHud() {
+  const b = g.paintBadge;
+  if (game.mode === "room" && !game.isHost) {
+    const n = Math.max(0, game.remaining);
+    b.hidden = false;
+    b.textContent = n === 1 ? "1 paint left" : `${n} paints left`;
+    b.className = "paint-badge" + (n === 0 ? " empty" : n <= 5 ? " low" : "");
+  } else if (game.mode === "room") {
+    b.hidden = false;
+    b.textContent = xray ? "Teacher · X-ray on" : "Teacher";
+    b.className = "paint-badge host";
+  } else b.hidden = true;
+  g.sub.textContent = game.mode === "room"
+    ? `Room ${game.code}${game.roomName ? " · " + game.roomName : ""}`
+    : game.mode === "solo" ? "Solo map · unlimited paint · this browser only"
+    : "Paint to reveal the complex plane";
+  if (game.mode === "room") g.youPaint.textContent = Math.max(0, game.remaining);
+}
+
+const el = (tag, cls, text) => {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+};
+const btn = (text, cls, title, onClick) => {
+  const b = el("button", cls, text);
+  b.type = "button";
+  if (title) b.title = title;
+  b.addEventListener("click", onClick);
+  return b;
+};
+
+// Jump to an objective tile, framed at exactly its pyramid level on this
+// device (pickLevel inverted: spanW = pxW / 2^(L+6)).
+function flyToTile(key) {
+  const t = parseTileKey(key);
+  const p = readParams();
+  state.spanW = p.pxW / Math.pow(2, t.L + 6);
+  const f = neededFrac(state.spanW, p.pxW);
+  const span = tileSpanFp(t.L, f);
+  state.frac = f;
+  state.cx = rootLeftFp(f) + t.ix * span + span / 2n;
+  state.cy = rootTopFp(f) - t.iy * span - span / 2n;
+  render();
+}
+
+function renderGamePanel() {
+  if (game.mode !== "room") return;
+  g.roomName.textContent = game.roomName || "Room";
+  g.roomCode.textContent = game.code;
+  g.youRows.hidden = game.isHost;
+  g.youName.textContent = game.name;
+  const found = game.objectives.filter((o) => o.found);
+  g.foundCount.textContent = `${found.length} / ${game.objectiveCount}`;
+
+  g.discoveryList.replaceChildren();
+  if (!found.length) g.discoveryList.append(el("p", "empty-note",
+    game.objectiveCount ? "Treasures are hidden somewhere deep in the set…" : "No treasures hidden yet."));
+  for (const o of [...found].sort((a, b) => b.foundAt - a.foundAt)) {
+    const row = el("div", "disc-row");
+    const go = btn("", "go", "Fly there", () => flyToTile(o.key));
+    go.append(el("span", "star", "★ "), el("span", null, o.name), el("span", "by", ` — ${o.foundBy}`));
+    row.append(go);
+    if (o.note) row.append(el("p", "note", o.note));
+    g.discoveryList.append(row);
+  }
+
+  g.playerList.replaceChildren();
+  if (!game.players.length) g.playerList.append(el("p", "empty-note", "Nobody has joined yet."));
+  const ps = [...game.players].sort((a, b) => b.found - a.found || b.spent - a.spent);
+  for (const pl of ps) {
+    const row = el("div", "player-row" + (pl.id === game.playerId ? " me" : ""));
+    row.append(el("span", "pname", pl.name));
+    row.append(el("span", "pstat", `★${pl.found} · ${pl.spent} painted`));
+    if (game.isHost) {
+      row.append(el("span", "pstat left", `${pl.remaining} left`));
+      row.append(btn(`+${grantAmount()}`, "ghost mini", `Give ${pl.name} more paint`, () => grant(pl.id)));
+    }
+    g.playerList.append(row);
+  }
+
+  if (game.isHost) renderHostPanel();
+}
+
+function renderHostPanel() {
+  const base = `${location.origin}${location.pathname}?room=${game.code}`;
+  g.joinLink.value = base;
+  g.hostLink.value = `${base}&host=${game.hostToken}`;
+  if (document.activeElement !== g.startBudget) g.startBudget.value = game.startBudget;
+  g.objList.replaceChildren();
+  if (!game.objectives.length) g.objList.append(el("p", "empty-note", "No treasures yet."));
+  for (const o of game.objectives) {
+    const row = el("div", "obj-row" + (o.found ? " found" : ""));
+    const go = btn("", "go", o.note || "Fly there", () => flyToTile(o.key));
+    go.append(el("span", "star", o.found ? "★ " : "☆ "), el("span", null, o.name),
+      el("span", "by", o.found ? ` — ${o.foundBy}` : ` · L${o.L}`));
+    const del = btn("✕", "del", "Delete treasure", async () => {
+      if (!confirm(`Delete treasure “${o.name}”?`)) return;
+      try { await api("DELETE", roomUrl(`objectives/${o.id}`)); pollRoom(); }
+      catch (err) { toast(err.message, "warn"); }
+    });
+    row.append(go, del);
+    g.objList.append(row);
+  }
+}
+// Level shown next to "Hide treasure here" tracks the live view.
+function updateHostLevel() {
+  if (game.isHost && currentCover) g.hostLevel.textContent = currentCover.L;
+}
+
+// ---- Teacher actions ----
+const grantAmount = () => Math.max(1, Math.round(Number(g.grantAmt.value) || 10));
+async function grant(player) {
+  try {
+    await api("POST", roomUrl("grant"), { player, amount: grantAmount() });
+    pollRoom();
+  } catch (err) { toast(err.message, "warn"); }
+}
+g.grantAll.addEventListener("click", () => grant("*"));
+g.grantAmt.addEventListener("change", renderGamePanel);
+g.startBudget.addEventListener("change", async () => {
+  try { await api("POST", roomUrl("settings"), { startBudget: Number(g.startBudget.value) }); pollRoom(); }
+  catch (err) { toast(err.message, "warn"); }
+});
+g.xray.addEventListener("change", () => {
+  xray = g.xray.checked;
+  updateGameHud();
+  render();
+});
+g.objAdd.addEventListener("click", async () => {
+  if (!currentCover || !renderParams) return;
+  const d = tileAtCanvasPoint(currentCover, renderParams.pxW / 2, renderParams.pxH / 2);
+  if (!d) return;
+  const key = paintedKeyOf(d);
+  if (painted.has(key)) {
+    toast("That tile is already revealed. Use X-ray to scout without painting, then hide treasures on fogged tiles.", "warn", 8000);
+    return;
+  }
+  const name = g.objName.value.trim();
+  if (!name) { toast("Give the treasure a name first.", "warn"); g.objName.focus(); return; }
+  try {
+    await api("POST", roomUrl("objectives"), { key, name, note: g.objNote.value });
+    g.objName.value = ""; g.objNote.value = "";
+    toast(`Hid “${name}” at level ${d.L}.`, "info");
+    pollRoom();
+  } catch (err) { toast(err.message, "warn"); }
+});
+for (const [b, input] of [[g.copyJoin, g.joinLink], [g.copyHost, g.hostLink]]) {
+  b.addEventListener("click", () => {
+    const done = () => { b.textContent = "Copied"; setTimeout(() => { b.textContent = "Copy"; }, 1500); };
+    if (navigator.clipboard) navigator.clipboard.writeText(input.value).then(done, () => input.select());
+    else input.select();
+  });
+}
+setInterval(updateHostLevel, 300);
+
 // ---------- Init ----------
 // Default the output size to the device's actual pixel resolution (clamped to the
 // input's 16..4096 range). Baked into DEFAULTS so Reset restores it too.
@@ -1746,7 +2257,6 @@ initWorkers();
 renderStopList();
 els.customStops.hidden = els.palettePreset.value !== "custom";
 render();
-// Painted-set sync: pull everyone's paints now and on a slow poll. The first
-// poll lands after the initial render, so revealPainted finds a live cover.
-pollPainted();
-setInterval(pollPainted, 3000);
+// Lobby / room / solo. In a room, the first poll lands before the settling
+// render, so the painted set is current when the cover resolves.
+boot();

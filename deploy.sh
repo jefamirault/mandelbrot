@@ -24,10 +24,13 @@ DOMAIN="${DEPLOY_DOMAIN:?DEPLOY_DOMAIN not set in .env}"
 
 # Only the files the site actually serves. Anything not listed here never
 # reaches the server, so CLAUDE.md / .git / deploy.sh stay local.
-# server.js is the shared painted-tile API: run it on the box (e.g. a systemd
-# unit running `node server.js 8000` in $DEST) and add to the nginx site:
+# server.js is the game rooms API: run it on the box (e.g. a systemd unit
+# running `node server.js 8000` in $DEST, optionally with ROOM_CREATE_KEY set)
+# and add to the nginx site:
 #   location /api/ { proxy_pass http://127.0.0.1:8000; }
-# Without it the site still works, but painting stays per-browser (local only).
+# It writes room logs to $DEST/data/rooms/ (must be writable by that unit;
+# rsync below never touches data/). Restart the unit after deploying a new
+# server.js. Without the API only solo (local-only) mode works.
 FILES=(index.html app.js style.css server.js)
 
 # ── Deploy stamp ─────────────────────────────────────────────────────────────
