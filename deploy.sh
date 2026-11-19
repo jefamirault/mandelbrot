@@ -24,19 +24,12 @@ DOMAIN="${DEPLOY_DOMAIN:?DEPLOY_DOMAIN not set in .env}"
 
 # Only the files the site actually serves. Anything not listed here never
 # reaches the server, so CLAUDE.md / .git / deploy.sh stay local.
-# server.js is the game rooms API: run it on the box (e.g. a systemd unit
-# running `node server.js 8000` in $DEST, optionally with ROOM_CREATE_KEY set)
-# and add to the nginx site:
-#   location /api/ {
-#     proxy_pass http://127.0.0.1:8000;
-#     proxy_buffering off;          # live presence is SSE (api/rooms/*/events);
-#     proxy_read_timeout 1h;        # server pings every 15 s, so this is just a ceiling
-#     proxy_http_version 1.1;
-#   }
-# (server.js also sends X-Accel-Buffering: no on the stream.)
-# It writes room logs to $DEST/data/rooms/ (must be writable by that unit;
-# rsync below never touches data/). Restart the unit after deploying a new
-# server.js. Without the API only solo (local-only) mode works.
+# server.js is the game rooms API. It runs on the box as systemd unit
+# `mandelbrot.service` with an nginx `location /api/` proxy, both installed
+# once by server-setup.sh (needs root — see its header). Room logs live in
+# $DEST/data/rooms/, which rsync below never touches. After syncing, this
+# script restarts the unit (sudo → prompts for the deploy password) and
+# smoke-tests /api/ through nginx.
 FILES=(index.html app.js style.css server.js)
 
 # ── Deploy stamp ─────────────────────────────────────────────────────────────
@@ -58,12 +51,33 @@ for f in "${FILES[@]}"; do
 done
 
 RSYNC_OPTS=(-avz --checksum --delete-after)
+DRY=false
 if [[ "${1:-}" == "--dry-run" || "${1:-}" == "-n" ]]; then
   RSYNC_OPTS+=(--dry-run)
+  DRY=true
   echo "── dry run: no files will be transferred ──"
 fi
 
 echo "Deploying to ${USER}@${HOST}:${DEST}/ (${DOMAIN})"
 rsync "${RSYNC_OPTS[@]}" "${FILES[@]}" "${USER}@${HOST}:${DEST}/"
+
+if ! $DRY; then
+  # The running server keeps old code until restarted.
+  echo "Restarting the game server (sudo password for ${USER} on ${HOST}):"
+  ssh -t "${USER}@${HOST}" 'sudo systemctl restart mandelbrot && systemctl is-active mandelbrot'
+
+  # A fake room must come back as the game server's JSON 404. nginx's own
+  # HTML 404 means the /api/ proxy is missing; 502 means the service is down.
+  sleep 1
+  code="$(curl -s -o /tmp/mandelbrot-smoke.$$ -w '%{http_code}' "https://${DOMAIN}/api/rooms/ZZZZZ/state" || true)"
+  if [[ "$code" == 404 ]] && grep -q '"error"' /tmp/mandelbrot-smoke.$$; then
+    echo "Smoke test: game server answering through nginx ✓"
+  else
+    echo "Smoke test FAILED: /api/ returned HTTP ${code} (see issue #3 / server-setup.sh)" >&2
+    rm -f /tmp/mandelbrot-smoke.$$
+    exit 1
+  fi
+  rm -f /tmp/mandelbrot-smoke.$$
+fi
 
 echo "Done. → https://${DOMAIN}/"

@@ -22,8 +22,11 @@ Web Worker is built from an inlined Blob URL (`WORKER_SRC`), not a separate `.js
 Chrome blocks `new Worker('file.js')` from `file://` origins.
 
 In production nginx serves the static files and proxies only the API:
-`location /api/ { proxy_pass http://127.0.0.1:8000; }` with `node server.js` running in
-the docroot (see deploy.sh comments).
+`location /api/ { proxy_pass … }` to `server.js`, which runs in the docroot as systemd unit
+`mandelbrot.service`. Both were installed once by `server-setup.sh` (root; idempotent).
+`deploy.sh` rsyncs, restarts the unit (sudo prompts for the deploy password), then
+smoke-tests `/api/` through nginx: a JSON 404 is healthy, nginx's HTML 404 means the proxy
+is missing, and 502 means the service is down.
 
 There is no test suite in-repo. To verify the math, write a throwaway Node script that
 copies the fixed-point + perturbation functions and compares against either direct
