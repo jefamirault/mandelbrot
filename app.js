@@ -453,7 +453,11 @@ const MAX_WORKERS = 64;
 // Persisted choice wins; otherwise the smart default (all-but-one, capped at 32).
 let NUM_WORKERS = SETTINGS.workers != null
   ? Math.max(1, Math.min(MAX_WORKERS, SETTINGS.workers))
-  : Math.max(2, Math.min(32, (navigator.hardwareConcurrency || 4) - 1));
+  : Math.max(2, Math.min(
+      // Phones/tablets throttle hard under sustained all-core load; 4 keeps
+      // them responsive (still adjustable in the panel).
+      window.matchMedia && matchMedia("(pointer: coarse)").matches ? 4 : 32,
+      (navigator.hardwareConcurrency || 4) - 1));
 
 let workers = [];
 let idleWorkers = [];
@@ -1504,8 +1508,14 @@ window.addEventListener("mouseup", (e) => {
 let recenterRaf = 0;
 canvas.addEventListener("dblclick", (e) => {
   e.preventDefault();
-  const { spanW, spanH } = spans();
+  // Touch double-taps are handled by the pointer code; some browsers still
+  // synthesize a dblclick afterwards — don't recenter twice.
+  if (performance.now() - lastTouchAt < 1000) return;
   const { fx, fy } = cursorFrac(e);
+  recenterAt(fx, fy);
+});
+function recenterAt(fx, fy) {
+  const { spanW, spanH } = spans();
   const dxReal = (fx - 0.5) * spanW;
   const dyReal = (0.5 - fy) * spanH;
 
@@ -1525,7 +1535,134 @@ canvas.addEventListener("dblclick", (e) => {
     recenterRaf = lin < 1 ? requestAnimationFrame(step) : 0;
   };
   recenterRaf = requestAnimationFrame(step);
+}
+
+// ---- Touch / pen input (Pointer Events) ----
+// Mouse keeps its own handlers above; these ignore pointerType "mouse".
+// One finger paints (tap or drag), two fingers pan + pinch-zoom, double-tap
+// re-centers. preventDefault on pointerdown suppresses the compatibility
+// mouse events, so the mouse handlers never see touches.
+//
+// The first paint of a touch is deferred (TOUCH_PAINT_DELAY) so a pinch that
+// starts with one finger slightly ahead of the other doesn't spend paint on
+// the tile under it. Once a second finger lands, the gesture never paints
+// again — even after one finger lifts — until every finger is up.
+//
+// Pinch is recomputed from the gesture-start state every frame (center, frac,
+// span), so precision never accumulates error, and frames render transient
+// (cache/fog only) like the wheel glide; release does the settling render().
+const TOUCH_PAINT_DELAY = 110;      // ms before a still finger starts painting
+const TAP_SLOP = 10;                // CSS px a tap may wander
+const DOUBLE_TAP_MS = 320;
+let lastTouchAt = 0;
+const touches = new Map();          // pointerId -> { x, y } (client px)
+let tg = null;                      // touch gesture state
+let lastTap = null;                 // { t, x, y } for double-tap detection
+let pinchRaf = 0;
+
+function touchMid() {
+  const [a, b] = [...touches.values()];
+  return { x: (a.x + b.x) / 2, y: (a.y + b.y) / 2, d: Math.hypot(a.x - b.x, a.y - b.y) };
+}
+function startTouchPaint() {
+  if (!tg || tg.mode !== "pending") return;
+  clearTimeout(tg.timer);
+  tg.mode = "paint";
+  const d = tileAt(tg.start);
+  if (d) paintTile(d);
+}
+function pinchFrame() {
+  pinchRaf = 0;
+  if (!tg || tg.mode !== "pinch" || touches.size < 2) return;
+  const m = touchMid();
+  const rect = canvas.getBoundingClientRect();
+  const s = Math.max(1e-3, m.d / Math.max(1, tg.d0));
+  // Rebuild from the start state, then: new span = span0 / s, and shift the
+  // center so the world point under the start midpoint sits under the live one.
+  state.frac = tg.frac0; state.cx = tg.cx0; state.cy = tg.cy0;
+  const spanW1 = tg.spanW0 / s, spanH1 = tg.spanH0 / s;
+  state.spanW = spanW1;
+  ensurePrecision();
+  const f0x = (tg.m0.x - rect.left) / rect.width, f0y = (tg.m0.y - rect.top) / rect.height;
+  const f1x = (m.x - rect.left) / rect.width, f1y = (m.y - rect.top) / rect.height;
+  applyCenterDelta((f0x - 0.5) * tg.spanW0 - (f1x - 0.5) * spanW1,
+                   (0.5 - f0y) * tg.spanH0 - (0.5 - f1y) * spanH1);
+  render({ transient: true });
+}
+
+canvas.addEventListener("pointerdown", (e) => {
+  if (e.pointerType === "mouse") return;
+  e.preventDefault();
+  lastTouchAt = performance.now();
+  try { canvas.setPointerCapture(e.pointerId); } catch (err) { /* already gone */ }
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (touches.size === 1) {
+    tg = { mode: "pending", start: { clientX: e.clientX, clientY: e.clientY }, t0: lastTouchAt, moved: false };
+    tg.timer = setTimeout(startTouchPaint, TOUCH_PAINT_DELAY);
+  } else if (touches.size === 2 && tg && tg.mode !== "done") {
+    // Second finger: switch to pinch/pan (no more painting this gesture).
+    clearTimeout(tg.timer);
+    if (recenterRaf) { cancelAnimationFrame(recenterRaf); recenterRaf = 0; }
+    zoomAnim = null;
+    const m = touchMid();
+    const { spanW, spanH } = spans();
+    tg = { mode: "pinch", m0: { x: m.x, y: m.y }, d0: m.d,
+           cx0: state.cx, cy0: state.cy, frac0: state.frac, spanW0: spanW, spanH0: spanH };
+    hoverDesc = null;
+  }
 });
+
+canvas.addEventListener("pointermove", (e) => {
+  if (e.pointerType === "mouse" || !touches.has(e.pointerId)) return;
+  touches.set(e.pointerId, { x: e.clientX, y: e.clientY });
+  if (!tg) return;
+  if (tg.mode === "pending" &&
+      Math.hypot(e.clientX - tg.start.clientX, e.clientY - tg.start.clientY) > TAP_SLOP) {
+    tg.moved = true;
+    startTouchPaint();
+  }
+  if (tg.mode === "paint") {
+    const d = tileAt(e);
+    if (d) paintTile(d);
+  } else if (tg.mode === "pinch" && !pinchRaf) {
+    pinchRaf = requestAnimationFrame(pinchFrame);
+  }
+});
+
+function endTouch(e, cancelled) {
+  if (e.pointerType === "mouse" || !touches.has(e.pointerId)) return;
+  lastTouchAt = performance.now();
+  if (tg && tg.mode === "pinch") {
+    // First lift ends the pinch: apply the final finger positions (while both
+    // are still tracked), resolve the destination, ignore the other finger.
+    if (pinchRaf) { cancelAnimationFrame(pinchRaf); pinchRaf = 0; }
+    pinchFrame();
+    tg = { mode: "done" };
+    render();
+  }
+  touches.delete(e.pointerId);
+  if (!tg || touches.size > 0) return;
+  const g0 = tg;
+  tg = null;
+  clearTimeout(g0.timer);
+  if (cancelled || g0.mode === "done") return;
+  // A quick, still tap: paint it (if the hold timer didn't already), and a
+  // second tap close in time/space re-centers on that point.
+  const tap = !g0.moved && performance.now() - g0.t0 < 300;
+  if (g0.mode === "pending") { const d = tileAt(g0.start); if (d) paintTile(d); }
+  if (!tap) { lastTap = null; return; }
+  const now = performance.now();
+  if (lastTap && now - lastTap.t < DOUBLE_TAP_MS &&
+      Math.hypot(e.clientX - lastTap.x, e.clientY - lastTap.y) < TAP_SLOP * 3) {
+    lastTap = null;
+    const { fx, fy } = cursorFrac(e);
+    recenterAt(fx, fy);
+  } else {
+    lastTap = { t: now, x: e.clientX, y: e.clientY };
+  }
+}
+canvas.addEventListener("pointerup", (e) => endTouch(e, false));
+canvas.addEventListener("pointercancel", (e) => endTouch(e, true));
 
 // Wheel over the fractal zooms; over a floating panel it scrolls that panel.
 // The canvas now fills the viewport, so a bounding-box test would catch the
@@ -2244,14 +2381,44 @@ setInterval(updateHostLevel, 300);
 // ---------- Init ----------
 // Default the output size to the device's actual pixel resolution (clamped to the
 // input's 16..4096 range). Baked into DEFAULTS so Reset restores it too.
+// On touch devices (phones/tablets: 3x DPR, weak thermals) cap DPR at 2 and
+// the long edge at TOUCH_MAX_PX — a 1170×2532 canvas is ~4× the tiles for
+// detail the eye can't see at arm's length.
+const COARSE = window.matchMedia && matchMedia("(pointer: coarse)").matches;
+const TOUCH_MAX_PX = 1600;
 (() => {
-  const dpr = window.devicePixelRatio || 1;
+  const dpr = COARSE ? Math.min(2, window.devicePixelRatio || 1) : (window.devicePixelRatio || 1);
   const clamp = (n) => Math.max(16, Math.min(4096, Math.round(n)));
-  DEFAULTS.pxW = clamp(screen.width * dpr);
-  DEFAULTS.pxH = clamp(screen.height * dpr);
+  let w = screen.width * dpr, h = screen.height * dpr;
+  // Match the current orientation (some browsers report screen in portrait).
+  if ((w > h) !== (innerWidth > innerHeight)) [w, h] = [h, w];
+  if (COARSE) { const k = Math.min(1, TOUCH_MAX_PX / Math.max(w, h)); w *= k; h *= k; }
+  DEFAULTS.pxW = clamp(w);
+  DEFAULTS.pxH = clamp(h);
   els.pxW.value = DEFAULTS.pxW;
   els.pxH.value = DEFAULTS.pxH;
 })();
+// Rotating a phone flips the viewport aspect; object-fit: cover would then
+// crop most of the canvas and pointer→tile mapping (which assumes matching
+// aspect) would drift. Swap the output dimensions to follow the orientation.
+window.addEventListener("resize", () => {
+  const w = +els.pxW.value, h = +els.pxH.value;
+  if (!COARSE || w === h || (w > h) === (innerWidth > innerHeight)) return;
+  els.pxW.value = h; els.pxH.value = w;
+  render();
+});
+// Bottom sheet (small screens): the controls panel slides up over the map.
+// On desktop the toggle is display:none and the class does nothing.
+$("sheetToggle").addEventListener("click", () => {
+  const open = document.body.classList.toggle("sheet-open");
+  $("sheetToggle").textContent = open ? "Close" : "Controls";
+  $("sheetToggle").setAttribute("aria-expanded", String(open));
+});
+// Touch hint (the default text describes mouse controls).
+if (COARSE) {
+  const hint = document.querySelector(".hint");
+  if (hint) hint.textContent = "Tap or drag to paint · two fingers to pan & zoom · double-tap to re-center";
+}
 initState();
 initWorkers();
 renderStopList();

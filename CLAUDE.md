@@ -92,6 +92,16 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   has focus). `contextmenu` is suppressed on the canvas. Wheel zoom and dblclick re-center
   are unchanged. Hover shows a brush outline on the `loadCanvas` layer (same rAF tick as
   the spinners).
+- **Touch / pen input is Pointer Events** (`pointerdown/move/up/cancel` on the canvas,
+  ignoring `pointerType === "mouse"` so the mouse handlers stay untouched; preventDefault
+  on pointerdown suppresses compatibility mouse events, `touch-action: none` on `#canvas`).
+  One finger paints — the first paint waits `TOUCH_PAINT_DELAY` (or movement past
+  `TAP_SLOP`) so a pinch starting one finger early doesn't spend paint. Two fingers =
+  pan + pinch-zoom, rebuilt every frame from the gesture-start `cx/cy/frac/spanW` (no
+  accumulated error) on transient renders; the first lift settles with `render()` and
+  the gesture paints nothing more until all fingers are up. Double-tap → `recenterAt`
+  (shared with `dblclick`, which ignores synthesized post-touch dblclicks via
+  `lastTouchAt`).
 - **Look-ahead explore overlay.** `drawExploreOverlay` marks, inside each cover tile,
   descendants up to `EXPLORE_LOOKAHEAD` (3) levels deeper that are painted — nested
   translucent rects fading with depth, so you can see where exploration continues before
@@ -170,6 +180,16 @@ Float64 dies at ~1e-14. To go deeper:
 Every deploy also ships a `deploy.json` stamp (UTC timestamp, short commit SHA, branch,
 dirty flag). It is public on purpose and is what https://status.jefamirault.com/ reads to
 report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
+
+### Small screens / touch devices
+- `@media (max-width: 700px)`: `.controls` becomes a bottom sheet (closed by default,
+  `#sheetToggle` toggles `body.sheet-open`), the tile-engine `.info-panel` is hidden,
+  header/badges/hint/toasts are compacted so nothing overlaps. Inputs get 16px font
+  (prevents iOS focus-zoom).
+- `COARSE` (`pointer: coarse`) devices cap the default output size (DPR ≤ 2, long edge
+  ≤ `TOUCH_MAX_PX`), default to ≤ 4 workers, swap `pxW/pxH` on rotation (pointer→tile
+  mapping assumes canvas aspect = viewport aspect under `object-fit: cover`), and get a
+  touch-worded `.hint`.
 
 ## Invariants & gotchas
 - **Square pixels.** One `scale = state.spanW / pxW` drives both axes. The view *height*
