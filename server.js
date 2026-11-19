@@ -57,6 +57,9 @@ function blankRoom(code) {
     tokens: new Map(),                      // tokenHash -> player id
     objectives: new Map(),                  // id -> { id, name, note, key, L, created, foundBy, foundAt }
     objByKey: new Map(),                    // key -> objective id
+    // Ephemeral presence (never logged): open SSE streams + last hover per player.
+    streams: new Set(),                     // { res, pid, host }
+    hovers: new Map(),                      // pid -> { key, name, t }
   };
 }
 
@@ -183,6 +186,45 @@ function stateView(room, auth, since) {
 }
 
 // ---------------------------------------------------------------------------
+// Presence: live hovered tiles over Server-Sent Events. In memory only — a
+// restart just drops everyone's cursor. Only students broadcast: the host's
+// hover is never sent (X-ray scouting would point straight at treasures).
+// ---------------------------------------------------------------------------
+const SSE_PING_MS = 15000;
+
+function sseSend(res, event, data) {
+  res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`);
+}
+// Fan a student's hover out to every stream except their own.
+function broadcastHover(room, pid, payload, event = "hover") {
+  for (const st of room.streams) if (st.pid !== pid) sseSend(st.res, event, payload);
+}
+function openStream(room, req, res, auth) {
+  res.writeHead(200, {
+    "Content-Type": "text/event-stream; charset=utf-8",
+    "Cache-Control": "no-store",
+    Connection: "keep-alive",
+    "X-Accel-Buffering": "no",          // tell nginx not to buffer this response
+  });
+  res.write("retry: 3000\n\n");
+  const st = { res, pid: auth.host ? "host" : auth.player.id, host: auth.host };
+  room.streams.add(st);
+  // Snapshot so a (re)connecting client sees cursors that are holding still.
+  for (const [pid, h] of room.hovers) {
+    if (pid !== st.pid && h.key) sseSend(res, "hover", { id: pid, name: h.name, key: h.key });
+  }
+  const ping = setInterval(() => res.write(": ping\n\n"), SSE_PING_MS);
+  req.on("close", () => {
+    clearInterval(ping);
+    room.streams.delete(st);
+    // Last stream for this player gone → their cursor leaves for everyone.
+    if (st.host) return;
+    for (const o of room.streams) if (o.pid === st.pid) return;
+    if (room.hovers.delete(st.pid)) broadcastHover(room, st.pid, { id: st.pid }, "leave");
+  });
+}
+
+// ---------------------------------------------------------------------------
 // HTTP plumbing
 // ---------------------------------------------------------------------------
 function json(res, code, obj) {
@@ -255,8 +297,32 @@ function handleApi(req, res, url) {
     });
   }
 
+  // GET /api/rooms/:code/events?token=… | ?host=… — presence stream. Tokens ride
+  // in the query because EventSource can't set headers.
+  if (action === "events" && req.method === "GET") {
+    const q = url.searchParams;
+    const fake = { headers: { "x-host-token": q.get("host"), "x-token": q.get("token") } };
+    const a = authOf(room, fake);
+    if (!a) return json(res, 401, { error: "not a member of this room" });
+    return openStream(room, req, res, a);
+  }
+
   const auth = authOf(room, req);
   if (!auth) return json(res, 401, { error: "not a member of this room" });
+
+  // POST /api/rooms/:code/hover {key|null} — the tile under this student's cursor.
+  if (action === "hover" && req.method === "POST") {
+    return readBody(req, res, (data) => {
+      if (auth.host) return json(res, 200, { ok: true });     // never broadcast the host
+      const key = data.key == null ? null : String(data.key);
+      if (key !== null && !KEY_RE.test(key)) return json(res, 400, { error: "bad tile key" });
+      const p = auth.player;
+      if (key) room.hovers.set(p.id, { key, name: p.name, t: Date.now() });
+      else room.hovers.delete(p.id);
+      broadcastHover(room, p.id, { id: p.id, name: p.name, key });
+      return json(res, 200, { ok: true });
+    });
+  }
 
   // GET /api/rooms/:code/state?since=N — painted keys since the cursor + roster.
   if (action === "state" && req.method === "GET") {

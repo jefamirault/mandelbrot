@@ -27,7 +27,13 @@ DOMAIN="${DEPLOY_DOMAIN:?DEPLOY_DOMAIN not set in .env}"
 # server.js is the game rooms API: run it on the box (e.g. a systemd unit
 # running `node server.js 8000` in $DEST, optionally with ROOM_CREATE_KEY set)
 # and add to the nginx site:
-#   location /api/ { proxy_pass http://127.0.0.1:8000; }
+#   location /api/ {
+#     proxy_pass http://127.0.0.1:8000;
+#     proxy_buffering off;          # live presence is SSE (api/rooms/*/events);
+#     proxy_read_timeout 1h;        # server pings every 15 s, so this is just a ceiling
+#     proxy_http_version 1.1;
+#   }
+# (server.js also sends X-Accel-Buffering: no on the stream.)
 # It writes room logs to $DEST/data/rooms/ (must be writable by that unit;
 # rsync below never touches data/). Restart the unit after deploying a new
 # server.js. Without the API only solo (local-only) mode works.

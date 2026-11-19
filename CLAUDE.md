@@ -147,6 +147,17 @@ path has been checked to match exact BigInt iteration with zero mismatches at 1e
   level a given zoom maps to depends on `pxW` (device resolution), so "level L" is the
   stable notion, not "zoom N×".
 
+- **Presence (live hovers).** Ephemeral, in memory only (`room.streams`/`room.hovers`),
+  never in the event log. Clients open an SSE stream `GET api/rooms/<CODE>/events?token=…`
+  (or `?host=…` — EventSource can't send headers) and `POST …/hover {key|null}` throttled to
+  100 ms plus a 2 s heartbeat while hovering; remote cursors expire client-side after 5 s,
+  and the server broadcasts `leave` when a player's last stream closes. **The host's hover
+  is never broadcast** (X-ray scouting would point at treasures); the host only watches.
+  Remote hovers draw on `#loadCanvas` in the rAF tick (`drawRemoteHovers`, which keeps the
+  tick alive while anyone is present), positioned with the shared `tileScreenRect`. Behind
+  nginx the `/api/` location needs `proxy_buffering off` (see deploy.sh). If SSE fails,
+  presence is just empty.
+
 ### Perturbation theory (deep zoom, power == 2 only)
 Float64 dies at ~1e-14. To go deeper:
 - The view **center** is stored in high precision as BigInt fixed-point (`state.cx/cy`,
