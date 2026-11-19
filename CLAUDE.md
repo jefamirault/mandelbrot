@@ -11,7 +11,11 @@ and the teacher hides treasures on specific tiles for the class to discover.
 - `style.css` — dark theme; layout is a flex column (`header` + `main`).
 - `app.js` — everything: math, worker pool, rendering, interactions, palette UI.
 - `server.js` — game rooms API + static server. Node builtins only (no package.json).
-  Store is `data/rooms/<CODE>.jsonl` (gitignored), one append-only event log per room.
+  Store (gitignored `data/`): `data/rooms/<CODE>.jsonl`, one append-only event log per
+  room, and `data/tiles/`, shared computed tiles (#8).
+- `bench/bench.js` — tile-compute benchmark + exactness check (see Running).
+- `deploy.sh` (rsync + restart + smoke test), `server-setup.sh` (one-time root setup of the
+  systemd unit + nginx `/api/` proxy), `serve.sh` (local dev server).
 
 ## Running
 `./serve.sh` (= `node server.js 8000`) serves the site *and* the rooms API.
@@ -28,6 +32,10 @@ In production nginx serves the static files and proxies only the API:
 smoke-tests `/api/` through nginx: a JSON 404 is healthy, nginx's HTML 404 means the proxy
 is missing, and 502 means the service is down.
 
+Every deploy also ships a `deploy.json` stamp (UTC timestamp, short commit SHA, branch,
+dirty flag). It is public on purpose and is what https://status.jefamirault.com/ reads to
+report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
+
 There is no test suite, but `node bench/bench.js` runs the real `WORKER_SRC` and the
 reference-orbit code on fixed tiles (interior, boundary, outside, deep), times them, and
 checks every pixel against brute-force iteration (direct doubles shallow; sparse
@@ -41,7 +49,9 @@ the phase-1 work (track it in the BLA issue, #7).
 ## Architecture
 
 ### Tile pyramid cache (Google-Maps-style) + worker pool
-- A pool of `NUM_WORKERS` (= `navigator.hardwareConcurrency`, clamped 2–8) is created once.
+- A pool of `NUM_WORKERS` is created once: `hardwareConcurrency − 1`, capped by the device
+  profile (`DEVICE.maxWorkers`: 32 desktop, 4 touch, 2 low-memory). A worker count set in the
+  panel is persisted and wins. `setWorkerCount` rebuilds the pool.
 - The world is a **quadtree**: level `L` has `2^L × 2^L` tiles, each `TILE_PX` (256px) and
   spanning `ROOT_SPAN/2^L` (`ROOT_SPAN = 4`, a power of two → tile edges are exact in
   fixed-point). A tile is keyed `(L, ix, iy)` with `ix/iy` **BigInt** (deep zoom blows past
@@ -61,7 +71,7 @@ the phase-1 work (track it in the BLA issue, #7).
 - Misses show an **upscaled nearest cached ancestor** as an instant placeholder
   (`blitPlaceholder`) — the maps-like blurry-zoom — replaced when the exact tile computes.
 - **Progressive tile compute.** Each compute job renders in coarse→fine passes
-  (`PROGRESSIVE_PASSES = [8, 2, 1]`): the worker computes a strided subsample, block-replicates
+  (`PROGRESSIVE_PASSES` = `DEVICE.passes`: `[8, 2, 1]`, or `[8, 1]` on the low tier): the worker computes a strided subsample, block-replicates
   it to fill the tile, posts it as a non-`final` frame, then refines. Strides each divide the
   previous, so every pixel is computed exactly once across all passes and the `final` tile is
   identical to a single full-res pass (only `final` results are cached). This covers the gap the
@@ -235,9 +245,12 @@ Float64 dies at ~1e-14. To go deeper:
   `rescaleState`. Per-pixel offsets stay tiny and are handled in plain doubles.
 - `computeReferenceOrbit` iterates `Z → Z² + C` at full precision for the **view center**,
   storing each `Zₙ` as a double. One reference per render serves every tile (broadcast as a
-  `ref` message before the `tile` messages). Iteration values are **reference-independent**,
-  so a tile computed under one render's reference is valid forever — that's what makes them
-  cacheable and reusable as the view moves.
+  `ref` message before the `tile` messages; `broadcastRef` computes it lazily once per
+  generation). Iteration values are **reference-independent mathematically**, so a tile
+  computed under one render's reference stays valid. That's what makes tiles cacheable
+  and shareable. Not bit-for-bit, though: at chaotic pixels, different references give
+  slightly different smooth values (the bench's deep tile shows maxΔ ~33 at a few pixels,
+  pre-existing). That's why the shared-tile spot check uses a tolerance.
 - Workers compute each pixel as a delta from the reference using only doubles, with
   **automatic rebasing** (Zhuoran's method) — this self-extends short references and
   suppresses glitches without a separate glitch-correction pass. See `perturb()` in `WORKER_SRC`.
@@ -247,10 +260,6 @@ Float64 dies at ~1e-14. To go deeper:
   from that, so it never forms an absolute coordinate (catastrophic cancellation at depth).
 - `power !== 2` falls back to direct double iteration (`iterate()`), i.e. **no deep
   precision** — the status line says so.
-
-Every deploy also ships a `deploy.json` stamp (UTC timestamp, short commit SHA, branch,
-dirty flag). It is public on purpose and is what https://status.jefamirault.com/ reads to
-report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
 
 ### Small screens / touch devices
 - `@media (max-width: 700px)`: `.controls` becomes a bottom sheet (closed by default,
@@ -293,13 +302,22 @@ report what is live here — see `~/devops/PATTERNS.md` § Deploy stamping.
   scope, so anything it needs is passed in the job message.
 - Match the existing terse comment style: explain *why*, not *what*.
 
+## Performance work (plan: issues #4–#10)
+Done: #4 compute shortcuts, #5 scheduling (open only for reusing the reference orbit
+across generations, measured ~10 ms, low value), #6 draw cache, #8 shared tiles, #10
+device profile. Remaining: **#7 bilinear approximation (BLA) for deep zoom** (next; the
+issue has a handoff comment with the constraints) and **#9 WebAssembly SIMD** (go/no-go
+after #7). Method for every phase: measure first (bench + headless-Chrome CDP scripts),
+keep results exact or document the trade-off, bump `TILE_ALGO` if worker output changes,
+re-run `bench/bench.js` (`class 0`), commit per phase, then comment on and close the issue.
+
 ## Known limitations / next steps
 - No multi-reference glitch correction — single reference + rebasing handles normal
   locations; a rare pathological spot could still artifact.
 - Deeper zoom needs higher max-iter (boundary detail grows with depth).
 - `power != 2` has no extended precision.
-- **Tiles are keyed by `paramHash = power|escapeR|maxIter`**, so changing any of those is a
-  full recompute (escaped pixels are reusable, interior aren't — a future optimization).
+- **Tiles are keyed by `paramHash = TILE_ALGO|power|escapeR|maxIter`**, so changing any of
+  those is a full recompute (escaped pixels are reusable, interior aren't — a future optimization).
   Palette changes are *not* in the key (they recolor via `repaint`).
 - Hybrid resampling slightly blurs tiles when the view scale doesn't exactly match the chosen
   level's; `pickLevel` rounds to keep it minimal.
