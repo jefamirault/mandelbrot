@@ -854,6 +854,100 @@ function parseTileKey(key) {
   return { L: Number(L), ix: BigInt(ix), iy: BigInt(iy) };
 }
 
+// ---- Presence: other students' hovered tiles, live ----
+// Server-Sent Events carry everyone's hover (the server never sends the host's,
+// so X-ray scouting can't leak treasures — and the host doesn't send at all).
+// Our own hover goes up as a throttled POST plus a slow heartbeat, so a cursor
+// holding still stays alive and one that vanished (crash, sleep) expires.
+// Purely cosmetic: if EventSource fails, presence just stays empty.
+const HOVER_THROTTLE_MS = 100, HOVER_BEAT_MS = 2000, PRESENCE_TTL_MS = 5000;
+const presence = new Map();   // player id -> { name, key, t, hue }
+let presenceSrc = null;       // EventSource
+let hoverWant = null, hoverSent = null, hoverTimer = 0, hoverBeat = 0;
+
+function openPresence() {
+  if (game.mode !== "room" || typeof EventSource === "undefined") return;
+  const q = game.hostToken ? `host=${encodeURIComponent(game.hostToken)}`
+    : `token=${encodeURIComponent(game.token)}`;
+  const es = new EventSource(roomUrl(`events?${q}`));
+  presenceSrc = es;
+  es.addEventListener("hover", (e) => {
+    let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+    if (!m.key) { presence.delete(m.id); return; }
+    presence.set(m.id, { name: String(m.name || "?"), key: m.key, t: performance.now(), hue: hueFor(m.id) });
+    startLoadAnim();
+  });
+  es.addEventListener("leave", (e) => {
+    try { presence.delete(JSON.parse(e.data).id); } catch (err) { /* ignore */ }
+  });
+  // EventSource reconnects on its own (server sends retry: 3000); the
+  // reconnect snapshot re-fills cursors, TTL clears ones that left meanwhile.
+  if (!game.isHost) hoverBeat = setInterval(() => { if (hoverWant && !hoverTimer) flushHover(); }, HOVER_BEAT_MS);
+}
+function closePresence() {
+  if (presenceSrc) presenceSrc.close();
+  presenceSrc = null;
+  clearInterval(hoverBeat); hoverBeat = 0;
+  clearTimeout(hoverTimer); hoverTimer = 0;
+  hoverWant = hoverSent = null;
+  presence.clear();
+}
+function reportHover(key) {
+  if (game.mode !== "room" || game.isHost || !presenceSrc) return;
+  hoverWant = key;
+  if (!hoverTimer && hoverWant !== hoverSent) hoverTimer = setTimeout(flushHover, HOVER_THROTTLE_MS);
+}
+function flushHover() {
+  hoverTimer = 0;
+  if (game.mode !== "room") return;
+  hoverSent = hoverWant;
+  api("POST", roomUrl("hover"), { key: hoverSent }).catch(() => { hoverSent = undefined; });  // resend on next change/beat
+}
+function expirePresence() {
+  const cutoff = performance.now() - PRESENCE_TTL_MS;
+  for (const [id, h] of presence) if (h.t < cutoff) presence.delete(id);
+}
+// Stable per-player hue (FNV-1a of the id), so a student keeps their color.
+function hueFor(id) {
+  let h = 2166136261;
+  for (let i = 0; i < id.length; i++) { h ^= id.charCodeAt(i); h = Math.imul(h, 16777619); }
+  return (h >>> 0) % 360;
+}
+// Remote hovers on the animated loadCanvas layer (redrawn every frame, so they
+// track pans/zooms for free). A remote tile can be at another level than the
+// view (level depends on each device's pxW): shallower → a big outline,
+// deeper → clamped to a small visible box.
+function drawRemoteHovers() {
+  if (!presence.size || !currentCover || !renderParams) return;
+  const p = renderParams, k = canvasPxPerCss(loadCanvas);
+  loadCtx.save();
+  loadCtx.font = `600 ${Math.round(11 * k)}px system-ui, sans-serif`;
+  loadCtx.textBaseline = "top";
+  for (const h of presence.values()) {
+    let { x, y, size } = tileScreenRect(h.key);
+    const min = 10 * k;
+    if (size < min) { x -= (min - size) / 2; y -= (min - size) / 2; size = min; }
+    if (x > p.pxW || y > p.pxH || x + size < 0 || y + size < 0) continue;
+    const col = `hsl(${h.hue}, 90%, 65%)`;
+    loadCtx.fillStyle = `hsla(${h.hue}, 90%, 65%, 0.10)`;
+    loadCtx.fillRect(x, y, size, size);
+    loadCtx.lineWidth = 2 * k;
+    loadCtx.strokeStyle = col;
+    loadCtx.strokeRect(x + k, y + k, size - 2 * k, size - 2 * k);
+    // Name tag inside the tile's bottom edge (the top edge is where the
+    // floating header/panels usually sit); just below a tile too small to hold it.
+    const padX = 5 * k, tagH = 16 * k;
+    const tw = loadCtx.measureText(h.name).width + padX * 2;
+    const ty0 = size >= tagH * 2 ? y + size - tagH : y + size;
+    const tx = Math.min(Math.max(x, 0), p.pxW - tw), ty = Math.min(Math.max(ty0, 0), p.pxH - tagH);
+    loadCtx.fillStyle = col;
+    loadCtx.fillRect(tx, ty, tw, tagH);
+    loadCtx.fillStyle = "#0b0d12";
+    loadCtx.fillText(h.name, tx + padX, ty + 2.5 * k);
+  }
+  loadCtx.restore();
+}
+
 // ---- Painting a tile (and placeholders) onto the viewport ----
 // Colorize a cached tile's iteration values into the scratch canvas.
 function colorizeToScratch(iter) {
@@ -931,23 +1025,32 @@ function drawExploreOverlay() {
 // (gold); the host also sees hidden ones (violet, dashed). Positions use
 // fixed-point subtraction from the view center like coverTiles, at a precision
 // deep enough for the objective's level even when the view is shallower.
+// Viewport rect (canvas px) of any tile key, at any level relative to the view.
+function tileScreenRect(key) {
+  const p = renderParams, vs = currentCover.viewScale;
+  const t = parseTileKey(key);
+  const f = Math.max(state.frac, t.L + 10);
+  const up = BigInt(f - state.frac);
+  const span = tileSpanFp(t.L, f);
+  const odx = fpToDouble(rootLeftFp(f) + t.ix * span - (state.cx << up), f);
+  const ody = fpToDouble(rootTopFp(f) - t.iy * span - (state.cy << up), f);
+  const size = ROOT_SPAN * Math.pow(2, -t.L) / vs;
+  return { x: odx / vs + p.pxW / 2, y: p.pxH / 2 - ody / vs, size };
+}
+// Canvas pixels per CSS pixel (object-fit: cover), for DPI-independent strokes/labels.
+function canvasPxPerCss(cnv) {
+  const p = renderParams, r = cnv.getBoundingClientRect();
+  return r.width ? 1 / Math.max(r.width / p.pxW, r.height / p.pxH) : 1;
+}
 function drawObjectiveMarkers() {
   if (!currentCover || !renderParams || !game.objectives.length) return;
-  const p = renderParams, vs = currentCover.viewScale;
-  const r = exploreCanvas.getBoundingClientRect();
-  const k = r.width ? 1 / Math.max(r.width / p.pxW, r.height / p.pxH) : 1;  // canvas px per CSS px
+  const p = renderParams;
+  const k = canvasPxPerCss(exploreCanvas);
   exploreCtx.save();
   exploreCtx.font = `600 ${Math.round(12 * k)}px system-ui, sans-serif`;
   exploreCtx.textBaseline = "middle";
   for (const o of game.objectives) {
-    const t = parseTileKey(o.key);
-    const f = Math.max(state.frac, t.L + 10);
-    const up = BigInt(f - state.frac);
-    const span = tileSpanFp(t.L, f);
-    const odx = fpToDouble(rootLeftFp(f) + t.ix * span - (state.cx << up), f);
-    const ody = fpToDouble(rootTopFp(f) - t.iy * span - (state.cy << up), f);
-    const size = ROOT_SPAN * Math.pow(2, -t.L) / vs;
-    const x = odx / vs + p.pxW / 2, y = p.pxH / 2 - ody / vs;
+    const { x, y, size } = tileScreenRect(o.key);
     const mx = x + size / 2, my = y + size / 2;
     const pad = 200 * k;
     if (mx < -pad || my < -pad || mx > p.pxW + pad || my > p.pxH + pad) continue;
@@ -1027,12 +1130,14 @@ function drawHoverHighlight(d) {
 function loadAnimTick(ts) {
   loadCtx.clearRect(0, 0, loadCanvas.width, loadCanvas.height);
   if (hoverDesc && painted.has(paintedKeyOf(hoverDesc))) hoverDesc = null;
-  if (pendingKeys.size === 0 && !hoverDesc) { loadAnimRaf = 0; return; }  // nothing left: stop
+  expirePresence();
+  if (pendingKeys.size === 0 && !hoverDesc && presence.size === 0) { loadAnimRaf = 0; return; }  // nothing left: stop
   const angle = (ts / 1000) * Math.PI * 1.8;               // ~0.9 rev/s
   for (const key of pendingKeys) {
     const d = pendingDesc.get(key);
     if (d) drawTileSpinner(d, angle);
   }
+  drawRemoteHovers();
   if (hoverDesc) drawHoverHighlight(hoverDesc);
   loadAnimRaf = requestAnimationFrame(loadAnimTick);
 }
@@ -1382,6 +1487,7 @@ function revealPainted(freshKeys) {
 // loadCanvas anim tick, which also clears it once the tile gets painted).
 function updateHover(e) {
   const d = tileAt(e);
+  reportHover(d ? paintedKeyOf(d) : null);
   const nd = d && !painted.has(paintedKeyOf(d)) ? d : null;
   if ((nd && nd.key) !== (hoverDesc && hoverDesc.key)) {
     hoverDesc = nd;
@@ -1438,7 +1544,9 @@ window.addEventListener("keydown", (e) => {
 });
 window.addEventListener("keyup", (e) => { if (PAN_KEYS[e.code]) heldPan.delete(e.code); });
 // Lost keyups (tab switch mid-hold) would pan forever — drop everything on blur.
-window.addEventListener("blur", () => heldPan.clear());
+window.addEventListener("blur", () => { heldPan.clear(); reportHover(null); });
+canvas.addEventListener("mouseleave", () => reportHover(null));
+document.addEventListener("visibilitychange", () => { if (document.hidden) reportHover(null); });
 
 let drag = null;      // pan-drag state
 let stroke = false;   // left-button paint stroke in progress
@@ -1464,7 +1572,7 @@ canvas.addEventListener("mousedown", (e) => {
 window.addEventListener("mousemove", (e) => {
   if (stroke) {
     const d = tileAt(e);
-    if (d) paintTile(d);
+    if (d) { paintTile(d); reportHover(paintedKeyOf(d)); }
     return;
   }
   if (!drag) { updateHover(e); return; }
@@ -2014,6 +2122,7 @@ g.soloBtn.addEventListener("click", enterSolo);
 // ---- Entering / leaving ----
 let pollTimer = 0;
 function resetGame() {
+  closePresence();
   clearInterval(pollTimer); pollTimer = 0;
   clearTimeout(pushTimer); pushTimer = 0;
   pushQueue = []; pushInFlight = 0;
@@ -2045,6 +2154,7 @@ async function enterRoom(code, sess) {
   if (game.mode !== "room" || game.code !== code) return;   // the poll bounced us
   render();
   pollTimer = setInterval(pollRoom, 3000);
+  openPresence();
 }
 function leaveRoom(error) {
   const code = game.code;
